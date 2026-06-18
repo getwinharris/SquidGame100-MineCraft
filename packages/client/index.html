@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="description" content="SquidGame100 MineCraft — a 100-player, permadeath, Squid Game–themed voxel battle-royale." />
+    <meta name="theme-color" content="#0b1f3a" />
+    <title>SquidGame100 MineCraft</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <style>
+      :root {
+        --sg-pink: #ff2d6f;
+        --sg-green: #00a86b;
+        --sg-ink: #0b1f3a;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; height: 100%; background: var(--sg-ink); overflow: hidden; }
+      #app { width: 100vw; height: 100vh; }
+      #scene { width: 100%; height: 100%; display: block; }
+      /* HUD overlay */
+      #hud {
+        position: fixed; inset: 0; pointer-events: none;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+      }
+      #status {
+        position: absolute; top: 12px; left: 12px;
+        background: rgba(11,31,58,0.6); padding: 8px 12px; border-radius: 6px;
+        font-size: 13px; line-height: 1.5; max-width: 360px;
+        border: 1px solid rgba(255,255,255,0.08);
+      }
+      #status .ok { color: var(--sg-green); }
+      #status .err { color: var(--sg-pink); }
+      #title-card {
+        position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        text-align: center;
+      }
+      #title-card h1 {
+        font-size: clamp(28px, 6vw, 64px); margin: 0; letter-spacing: 2px;
+        color: #fff;
+      }
+      #title-card h1 .accent { color: var(--sg-pink); }
+      #title-card p { margin: 12px 0 0; opacity: 0.8; font-size: 14px; }
+      .crosshair {
+        position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        width: 18px; height: 18px; opacity: 0.8;
+      }
+      .crosshair::before, .crosshair::after {
+        content: ''; position: absolute; background: #fff;
+      }
+      .crosshair::before { left: 50%; top: 0; width: 2px; height: 100%; transform: translateX(-50%); }
+      .crosshair::after { top: 50%; left: 0; height: 2px; width: 100%; transform: translateY(-50%); }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="scene"></canvas>
+    </div>
+    <div id="hud">
+      <div id="title-card">
+        <h1>Squid<span class="accent">Game</span>100 <span class="accent">MineCraft</span></h1>
+        <p>Stage 0 — foundation. Voxel engine &amp; netcode coming next.</p>
+      </div>
+      <div class="crosshair"></div>
+      <div id="status">connecting…</div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

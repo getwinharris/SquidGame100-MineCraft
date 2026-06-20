@@ -22,7 +22,13 @@ Browser client for SquidGame100 MineCraft: Vite, three.js rendering, HUD, input,
 
 - Draw primary visuals in the canvas, not CSS backgrounds.
 - Keep HUD text minimal during gameplay.
-- Stage 0 may use placeholder visuals; voxel engine and controllers belong to later stages.
+- Stage 1 Voxel Engine:
+  - Supports live rebuilding of the voxel instanced meshes on the main thread.
+  - Supports wireframe block highlights via raycasting.
+  - Allows block breaking (left-click) and block placement (right-click) matching the Minecraft standard.
+  - Provides a visual hotbar selector supporting numeric keys 1-9 or clicks.
+  - Integrates Web Audio API sound cue synthesizer representing Ghast ambient (Green Light), Blaze hit (Red Light), Explosion (Death), Level Up (Pass), Glass Break, and Lobby countdown Plings.
+  - Generates parallel Glass Bridge pathways with randomized fragile block triggers and recursive shattering algorithms.
 
 ## Verification
 

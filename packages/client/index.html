@@ -104,6 +104,61 @@
         transition: width 0.3s, background 0.3s;
       }
 
+      /* Hotbar container */
+      #hotbar {
+        position: absolute;
+        bottom: 14px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 6px;
+        background: rgba(11, 31, 58, 0.85);
+        border: 2px solid rgba(255, 255, 255, 0.15);
+        border-radius: 8px;
+        padding: 6px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        backdrop-filter: blur(8px);
+        pointer-events: auto;
+      }
+      .hotbar-slot {
+        position: relative;
+        width: 46px;
+        height: 46px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 2px solid transparent;
+        border-radius: 6px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.15s, border-color 0.15s, transform 0.1s;
+      }
+      .hotbar-slot:hover {
+        background: rgba(255, 255, 255, 0.12);
+        transform: scale(1.05);
+      }
+      .hotbar-slot.active {
+        border-color: var(--sg-pink);
+        background: rgba(255, 45, 111, 0.15);
+        box-shadow: 0 0 10px rgba(255, 45, 111, 0.3);
+      }
+      .slot-num {
+        position: absolute;
+        top: 2px;
+        left: 4px;
+        font-size: 9px;
+        color: rgba(255, 255, 255, 0.5);
+        font-weight: bold;
+      }
+      .block-preview {
+        width: 24px;
+        height: 24px;
+        background-color: var(--block-color);
+        border-radius: 4px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        box-shadow: inset 0 0 6px rgba(0,0,0,0.3);
+      }
+
       /* Crosshair */
       #crosshair {
         position: absolute; top: 50%; left: 50%;
@@ -177,6 +232,19 @@
         <label>HEALTH</label>
         <div id="health-bar"><div id="health-fill"></div></div>
       </div>
+
+      <!-- Hotbar -->
+      <div id="hotbar">
+        <div class="hotbar-slot active" id="slot-0" title="Stone" style="--block-color: #777788;"><span class="slot-num">1</span><div class="block-preview"></div></div>
+        <div class="hotbar-slot" id="slot-1" title="Grass" style="--block-color: #00a86b;"><span class="slot-num">2</span><div class="block-preview"></div></div>
+        <div class="hotbar-slot" id="slot-2" title="Sand" style="--block-color: #c8b560;"><span class="slot-num">3</span><div class="block-preview"></div></div>
+        <div class="hotbar-slot" id="slot-3" title="Wood" style="--block-color: #8b6914;"><span class="slot-num">4</span><div class="block-preview"></div></div>
+        <div class="hotbar-slot" id="slot-4" title="Pink Wall" style="--block-color: #ff2d6f;"><span class="slot-num">5</span><div class="block-preview"></div></div>
+        <div class="hotbar-slot" id="slot-5" title="Concrete" style="--block-color: #aaaaaa;"><span class="slot-num">6</span><div class="block-preview"></div></div>
+        <div class="hotbar-slot" id="slot-6" title="Gold" style="--block-color: #ffd700;"><span class="slot-num">7</span><div class="block-preview"></div></div>
+        <div class="hotbar-slot" id="slot-7" title="Glass" style="--block-color: rgba(136,204,255,0.6);"><span class="slot-num">8</span><div class="block-preview"></div></div>
+        <div class="hotbar-slot" id="slot-8" title="Black" style="--block-color: #111111;"><span class="slot-num">9</span><div class="block-preview"></div></div>
+      </div>
     </div>
 
     <!-- Click to play screen -->
@@ -210,6 +278,14 @@
             : 'linear-gradient(90deg,#cc1a50,#ff2d6f)';
         } catch {}
       }, 200);
+
+      // Hotbar slot selection via click
+      document.querySelectorAll('.hotbar-slot').forEach((slot, index) => {
+        slot.addEventListener('click', () => {
+          const event = new CustomEvent('select-slot', { detail: { index } });
+          window.dispatchEvent(event);
+        });
+      });
     </script>
   </body>
 </html>

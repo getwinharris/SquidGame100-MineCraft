@@ -1,0 +1,64 @@
+version: 1
+plan:
+  name: "SquidGame100 — Stage 0 Smoke & Triage"
+  max_concurrency: 3
+  max_consecutive_failures: 2
+  max_cycles: 10
+  auto_reject_retries: 1
+  verifier_config:
+    default_verifiers: [verifier]
+    audit_sample_rate: 0.0
+tasks:
+  - id: stage0-smoke
+    title: "Stage 0 browser smoke test + file reproducible issues"
+    prompt: |
+      Run a Stage 0 browser smoke test on SquidGame100 MineCraft at
+      /Users/getwinharris/Dev/MineCraft and file every reproducible defect you
+      find. You are the browser-qa rein — your only output is a clean list of
+      issues plus the evidence that backs each one.
+
+      DOX chain — read in this exact order before touching anything:
+      1. /Users/getwinharris/Dev/MineCraft/AGENTS.md
+      2. packages/AGENTS.md
+      3. packages/client/AGENTS.md
+      4. packages/server/AGENTS.md
+      5. packages/shared/AGENTS.md
+      6. .harness/AGENTS.md
+
+      Boot the runtime you need (Stage 0 is runnable per README + progress.md):
+      - Vite client: `npm -w @sg100/client run dev` (http://localhost:5173)
+      - Node server: `npm -w @sg100/server run dev` (http://localhost:8080, ws on /ws)
+      Health check before driving the browser: `curl -sf http://localhost:8080/healthz`.
+
+      Use Playwright (already in devDependencies) to drive the browser. Use the
+      test hooks documented in packages/client/AGENTS.md:
+      - `window.render_game_to_text()` — read scene/HUD state.
+      - `window.advanceTime(ms)` — deterministic time stepping.
+      Capture per run:
+      - every console.error and console.warn with full stack
+      - WebSocket connection state plus the last 10 frames
+      - screenshots at start, after one step, and after `advanceTime(2000)`
+      - the string returned by `render_game_to_text()` at each step
+
+      File findings as GitHub issues via `gh issue create` (verify
+      `gh auth status` first). If gh is unavailable or not authenticated,
+      write the same report to .issues/<slug>.md and tell the CTO.
+      - One issue per concrete reproducible defect. Do not bundle unrelated bugs.
+      - Body must include: title, repro steps, expected vs actual, evidence
+        paths (screenshots, console text, server logs), and the DOX path of
+        the affected package.
+
+      You must NOT modify game source. You may add or adjust only test
+      fixtures and smoke scripts. After any local-only edit you make,
+      `npm run typecheck` and `npm run build` must still exit 0.
+
+      Stop condition:
+      - Every finding has a self-contained repro: command, URL, expected,
+        actual, evidence path.
+      - `npm run typecheck` and `npm run build` exit 0.
+      - Each issue body names the DOX path of the affected package.
+      - Post a one-line summary back to the orchestrator with the list of
+        filed issue URLs (or .issues/ paths).
+    assigned_to: users-getwinharris-dev-minecraft--browser-qa
+    verify_skip_reason: "Discovery task — output is a list of issue reports that the CTO triages before any code change ships. Re-running the same browser smoke independently has low marginal value at this stage; the next cycle's game-fixer + game-reviewer will independently verify any fix."
+    max_retries: 1

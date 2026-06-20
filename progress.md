@@ -13,6 +13,8 @@ Original prompt: what is the stage of the project use [$develop-web-game](/Users
 
 ## TODO
 
-- Stage 1: voxel chunks, worker meshing, first-person controller, block break/place, hotbar.
-- Stage 2: hand-authored Squid Game island, HUD polish, props, atmosphere.
-- Stage 3+: authoritative rooms/netcode/match systems and mini-games.
+See `ROADMAP.md` for the approved two-phase plan (Phase A: rebuild full
+Minecraft as our own engine; Phase B: 100-player Squid Game BR).
+
+- Next: **Stage A1.1** — voxel chunk store + block registry (small PRs, PR-driven).
+- Stage 0 baselined. player-1 playability baseline pending.

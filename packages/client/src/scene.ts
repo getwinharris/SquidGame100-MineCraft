@@ -30,6 +30,12 @@ import {
   PointLight,
   HemisphereLight,
   Group,
+  Raycaster,
+  Vector2,
+  Matrix4,
+  LineSegments,
+  EdgesGeometry,
+  LineBasicMaterial,
 } from 'three';
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
@@ -65,6 +71,78 @@ const BLOCK_COLORS: Record<number, number> = {
   [BLOCK.BLOOD]: C.BLOOD, [BLOCK.GLASS]: 0x88ccff,
   [BLOCK.TEAL]: C.TEAL, [BLOCK.BLACK]: C.BLACK,
 };
+
+// ─── Sound Effects (Web Audio Synthesizer) ───────────────────────────────────
+class SoundEffects {
+  private ctx: AudioContext | null = null;
+
+  init(): void {
+    if (!this.ctx) {
+      this.ctx = new (window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext)();
+    }
+  }
+
+  playTone(freq: number, type: OscillatorType, duration: number, delay = 0): void {
+    this.init();
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime + delay;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t);
+    gain.gain.setValueAtTime(0.15, t);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(t);
+    osc.stop(t + duration);
+  }
+
+  playGreenLight(): void {
+    this.playTone(330, 'triangle', 0.1, 0);
+    this.playTone(440, 'triangle', 0.1, 0.1);
+    this.playTone(554, 'triangle', 0.1, 0.2);
+    this.playTone(659, 'triangle', 0.3, 0.3);
+  }
+
+  playRedLight(): void {
+    this.playTone(150, 'sawtooth', 0.4);
+  }
+
+  playGlassBreak(): void {
+    this.init();
+    for (let i = 0; i < 5; i++) {
+      this.playTone(1000 + Math.random() * 3000, 'sine', 0.15 + Math.random() * 0.15, Math.random() * 0.1);
+    }
+  }
+
+  playDeath(): void {
+    this.playTone(80, 'sawtooth', 0.8);
+    this.playTone(60, 'triangle', 1.0);
+  }
+
+  playPass(): void {
+    this.playTone(523, 'sine', 0.1, 0);
+    this.playTone(659, 'sine', 0.1, 0.1);
+    this.playTone(784, 'sine', 0.1, 0.2);
+    this.playTone(1046, 'sine', 0.3, 0.3);
+  }
+}
+const sounds = new SoundEffects();
+
+// ─── Glass Bridge Registry ───────────────────────────────────────────────────
+const fakeGlassPositions = new Set<string>();
+
+function breakGlassGroup(x: number, y: number, z: number): void {
+  if (x < 0 || x >= WORLD_W || y < 0 || y >= WORLD_H || z < 0 || z >= WORLD_D) return;
+  const idx = y * WORLD_W * WORLD_D + z * WORLD_W + x;
+  if (world[idx] !== BLOCK.GLASS) return;
+  world[idx] = BLOCK.AIR;
+  breakGlassGroup(x + 1, y, z);
+  breakGlassGroup(x - 1, y, z);
+  breakGlassGroup(x, y, z + 1);
+  breakGlassGroup(x, y, z - 1);
+}
 
 // ─── World ────────────────────────────────────────────────────────────────────
 const WORLD_W = 80, WORLD_H = 24, WORLD_D = 80;
@@ -129,12 +207,33 @@ function buildSquidGameIsland(): void {
     fill(57+Math.floor(s/3), 2+s, 15+(s%3)*4, 61+Math.floor(s/3), 2+s, 18+(s%3)*4, BLOCK.CONCRETE);
   }
 
-  // Glass bridge
+  // Glass bridge (Parallel paths)
+  fakeGlassPositions.clear();
   for (let i = 0; i < 16; i++) {
-    const bt = (i % 3 !== 2) ? BLOCK.GLASS : BLOCK.TEAL;
-    const sx = (i % 2 === 0) ? 36 : 38;
-    setBlock(sx, 4+Math.floor(i/2), 56+i, bt);
-    setBlock(sx+1, 4+Math.floor(i/2), 56+i, bt);
+    const y = 4 + Math.floor(i/2);
+    const z = 56 + i * 2;
+    const leftX = 35;
+    const rightX = 38;
+    const isLeftFake = Math.random() < 0.5;
+
+    // Left Platform
+    setBlock(leftX, y, z, BLOCK.GLASS);
+    setBlock(leftX + 1, y, z, BLOCK.GLASS);
+    if (isLeftFake) {
+      fakeGlassPositions.add(`${leftX},${y},${z}`);
+      fakeGlassPositions.add(`${leftX + 1},${y},${z}`);
+    }
+
+    // Right Platform
+    setBlock(rightX, y, z, BLOCK.GLASS);
+    setBlock(rightX + 1, y, z, BLOCK.GLASS);
+    if (!isLeftFake) {
+      fakeGlassPositions.add(`${rightX},${y},${z}`);
+      fakeGlassPositions.add(`${rightX + 1},${y},${z}`);
+    }
+
+    // Central beam connector
+    setBlock(37, y, z, BLOCK.TEAL);
   }
 
   // Gold vault / prize room
@@ -156,7 +255,21 @@ function buildSquidGameIsland(): void {
 }
 
 // ─── Mesh Builder ─────────────────────────────────────────────────────────────
+let worldMeshes: InstancedMesh[] = [];
+
 function buildWorldMesh(scene: Scene): void {
+  // Clear old meshes
+  for (const mesh of worldMeshes) {
+    scene.remove(mesh);
+    mesh.geometry.dispose();
+    if (Array.isArray(mesh.material)) {
+      mesh.material.forEach((m) => m.dispose());
+    } else {
+      mesh.material.dispose();
+    }
+  }
+  worldMeshes = [];
+
   const counts = new Map<number, number>();
   for (let y = 0; y < WORLD_H; y++) for (let z = 0; z < WORLD_D; z++) for (let x = 0; x < WORLD_W; x++) {
     const id = getBlock(x, y, z); if (id === BLOCK.AIR) continue;
@@ -172,7 +285,9 @@ function buildWorldMesh(scene: Scene): void {
     if (id===BLOCK.GLASS) { mat.transparent=true; mat.opacity=0.55; }
     const im = new InstancedMesh(geo, mat, cnt);
     im.castShadow = true; im.receiveShadow = true;
-    scene.add(im); meshes.set(id, {mesh:im, count:0});
+    scene.add(im);
+    worldMeshes.push(im);
+    meshes.set(id, {mesh:im, count:0});
   }
   const dummy = new Object3D();
   for (let y = 0; y < WORLD_H; y++) for (let z = 0; z < WORLD_D; z++) for (let x = 0; x < WORLD_W; x++) {
@@ -269,9 +384,24 @@ function mkGS(): GS {
   return {phase:'lobby',dollLooking:false,phaseTimer:5,dollAngle:0,dollTurning:false,elim:0,survivors:99};
 }
 
+let lastPhase: string = '';
+
 function updateGame(gs:GS, p:PlayerState, doll:Group, dt:number): string {
+  if (gs.phase !== lastPhase) {
+    if (gs.phase === 'greenlight') sounds.playGreenLight();
+    else if (gs.phase === 'redlight') sounds.playRedLight();
+    else if (gs.phase === 'eliminated') sounds.playDeath();
+    else if (gs.phase === 'won') sounds.playPass();
+    lastPhase = gs.phase;
+  }
+
   if (gs.phase==='lobby') {
+    const prevSec = Math.ceil(gs.phaseTimer);
     gs.phaseTimer-=dt;
+    const currSec = Math.ceil(gs.phaseTimer);
+    if (currSec < prevSec && currSec > 0) {
+      sounds.playTone(880, 'sine', 0.05); // Tick Pling!
+    }
     if(gs.phaseTimer<=0){gs.phase='greenlight';gs.phaseTimer=8;}
     return `<span class="gold">⬛ SQUID GAME 100 ⬛</span><br>
             <span class="green">WASD Move · SPACE Jump · Mouse Look</span><br>
@@ -376,12 +506,112 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
   const player = initPlayer();
   const gs = mkGS();
 
+  let selectedBlock: BlockId = BLOCK.STONE;
+
+  // Targeted block highlight wireframe
+  const highlightGeo = new BoxGeometry(1.02, 1.02, 1.02);
+  const edges = new EdgesGeometry(highlightGeo);
+  const highlightMat = new LineBasicMaterial({ color: 0xffffff, linewidth: 2 });
+  const blockHighlight = new LineSegments(edges, highlightMat);
+  blockHighlight.visible = false;
+  scene.add(blockHighlight);
+
+  const updateHotbarUI = () => {
+    const slots: BlockId[] = [
+      BLOCK.STONE, BLOCK.GRASS, BLOCK.SAND, BLOCK.WOOD,
+      BLOCK.PINK_WALL, BLOCK.CONCRETE, BLOCK.GOLD, BLOCK.GLASS, BLOCK.BLACK
+    ];
+    const idx = slots.indexOf(selectedBlock);
+    for (let i = 0; i < 9; i++) {
+      const slotEl = document.getElementById(`slot-${i}`);
+      if (slotEl) {
+        if (i === idx) {
+          slotEl.classList.add('active');
+        } else {
+          slotEl.classList.remove('active');
+        }
+      }
+    }
+  };
+
+  const onSelectSlot = (e: Event) => {
+    const customEvent = e as CustomEvent<{ index: number }>;
+    const slots: BlockId[] = [
+      BLOCK.STONE, BLOCK.GRASS, BLOCK.SAND, BLOCK.WOOD,
+      BLOCK.PINK_WALL, BLOCK.CONCRETE, BLOCK.GOLD, BLOCK.GLASS, BLOCK.BLACK
+    ];
+    selectedBlock = slots[customEvent.detail.index];
+    updateHotbarUI();
+  };
+  window.addEventListener('select-slot', onSelectSlot);
+
   const hudEl      = document.getElementById('game-hud');
   const crossEl    = document.getElementById('crosshair');
   const overlayEl  = document.getElementById('phase-overlay');
 
-  // Pointer lock
-  const onPD=()=>{ if(!player.isPointerLocked) canvas.requestPointerLock(); };
+  // Raycast block interaction (Break / Place)
+  const onMouseDown = (e: MouseEvent) => {
+    if (!player.isPointerLocked) return;
+
+    const raycaster = new Raycaster();
+    raycaster.far = 6;
+    raycaster.setFromCamera(new Vector2(0, 0), camera);
+    const intersects = raycaster.intersectObjects(worldMeshes);
+
+    if (intersects.length > 0) {
+      const intersect = intersects[0];
+      if (intersect.instanceId === undefined) return;
+
+      const matrix = new Matrix4();
+      (intersect.object as InstancedMesh).getMatrixAt(intersect.instanceId, matrix);
+      const clickedBlockPos = new Vector3();
+      clickedBlockPos.setFromMatrixPosition(matrix);
+
+      const bx = Math.round(clickedBlockPos.x);
+      const by = Math.round(clickedBlockPos.y);
+      const bz = Math.round(clickedBlockPos.z);
+
+      if (e.button === 0) {
+        // Left click: Break block
+        const blockId = getBlock(bx, by, bz);
+        if (blockId !== BLOCK.AIR) {
+          setBlock(bx, by, bz, BLOCK.AIR);
+          buildWorldMesh(scene);
+        }
+      } else if (e.button === 2) {
+        // Right click: Place block
+        if (!intersect.face) return;
+        const normal = intersect.face.normal.clone();
+        const newPos = clickedBlockPos.clone().add(normal);
+        const nx = Math.round(newPos.x);
+        const ny = Math.round(newPos.y);
+        const nz = Math.round(newPos.z);
+
+        if (nx < 0 || nx >= WORLD_W || ny < 0 || ny >= WORLD_H || nz < 0 || nz >= WORLD_D) return;
+        if (getBlock(nx, ny, nz) !== BLOCK.AIR) return;
+
+        // Player AABB check to avoid trapping the player
+        const overlapX = (player.pos.x - PW < nx + 0.5) && (player.pos.x + PW > nx - 0.5);
+        const overlapY = (player.pos.y - HEAD_H < ny + 0.5) && (player.pos.y - HEAD_H + 1.8 > ny - 0.5);
+        const overlapZ = (player.pos.z - PW < nz + 0.5) && (player.pos.z + PW > nz - 0.5);
+        if (overlapX && overlapY && overlapZ) return;
+
+        setBlock(nx, ny, nz, selectedBlock);
+        buildWorldMesh(scene);
+      }
+    }
+  };
+  const onContextMenu = (e: MouseEvent) => e.preventDefault();
+  canvas.addEventListener('mousedown', onMouseDown);
+  canvas.addEventListener('contextmenu', onContextMenu);
+
+  // Pointer lock & audio activation
+  const onPD=()=>{
+    if(!player.isPointerLocked) {
+      canvas.requestPointerLock();
+      sounds.init();
+    }
+  };
   const onPLC=()=>{ player.isPointerLocked=document.pointerLockElement===canvas;
     if(crossEl) crossEl.style.display=player.isPointerLocked?'block':'none'; };
   canvas.addEventListener('click',onPD);
@@ -402,6 +632,17 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
       player.pos.set(40,4,14); player.vel.set(0,0,0);
       player.health=100; player.eliminated=false;
       gs.phase='lobby'; gs.phaseTimer=3; gs.dollLooking=false;
+    }
+    // Slot selection keys 1-9
+    const keys = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9'];
+    const slots: BlockId[] = [
+      BLOCK.STONE, BLOCK.GRASS, BLOCK.SAND, BLOCK.WOOD,
+      BLOCK.PINK_WALL, BLOCK.CONCRETE, BLOCK.GOLD, BLOCK.GLASS, BLOCK.BLACK
+    ];
+    const keyIdx = keys.indexOf(e.code);
+    if (keyIdx !== -1) {
+      selectedBlock = slots[keyIdx];
+      updateHotbarUI();
     }
   };
   const onKU=(e:KeyboardEvent)=>player.keys.delete(e.code);
@@ -424,9 +665,64 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
     const hudText=updateGame(gs,player,doll,dt);
     dollLight.intensity=gs.dollLooking?3:0;
     if(!player.eliminated) updatePlayer(player,dt);
+
+    if (!player.eliminated) {
+      const feetY = Math.floor(player.pos.y - HEAD_H - 0.05);
+      const xStart = Math.floor(player.pos.x - PW);
+      const xEnd = Math.floor(player.pos.x + PW);
+      const zStart = Math.floor(player.pos.z - PW);
+      const zEnd = Math.floor(player.pos.z + PW);
+
+      let triggeredBreak = false;
+      for (let x = xStart; x <= xEnd; x++) {
+        for (let z = zStart; z <= zEnd; z++) {
+          if (getBlock(x, feetY, z) === BLOCK.GLASS) {
+            if (fakeGlassPositions.has(`${x},${feetY},${z}`)) {
+              breakGlassGroup(x, feetY, z);
+              triggeredBreak = true;
+            }
+          }
+          // Step on sand elimination (Squid Game boundary) if we are in won/active game state
+          if (getBlock(x, feetY, z) === BLOCK.SAND && gs.phase === 'won') {
+            player.health = 0;
+            player.eliminated = true;
+            gs.phase = 'eliminated';
+            break;
+          }
+        }
+        if (player.eliminated) break;
+      }
+      if (triggeredBreak) {
+        sounds.playGlassBreak();
+        buildWorldMesh(scene);
+      }
+    }
+
     camera.position.copy(player.pos);
     camera.rotation.order='YXZ';
     camera.rotation.y=player.yaw; camera.rotation.x=player.pitch;
+
+    // Raycast block highlight outline
+    const raycaster = new Raycaster();
+    raycaster.far = 6;
+    raycaster.setFromCamera(new Vector2(0, 0), camera);
+    const intersects = raycaster.intersectObjects(worldMeshes);
+    if (player.isPointerLocked && intersects.length > 0) {
+      const intersect = intersects[0];
+      if (intersect.instanceId !== undefined) {
+        const matrix = new Matrix4();
+        (intersect.object as InstancedMesh).getMatrixAt(intersect.instanceId, matrix);
+        const pos = new Vector3();
+        pos.setFromMatrixPosition(matrix);
+        blockHighlight.position.copy(pos);
+        blockHighlight.visible = true;
+      } else {
+        blockHighlight.visible = false;
+      }
+    } else {
+      blockHighlight.visible = false;
+    }
+
     if(hudEl) hudEl.innerHTML=hudText;
     flash+=dt;
     if(overlayEl){
@@ -458,6 +754,13 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
     document.removeEventListener('keydown',onKD);
     document.removeEventListener('keyup',onKU);
     window.removeEventListener('resize',onResize);
+    canvas.removeEventListener('mousedown', onMouseDown);
+    canvas.removeEventListener('contextmenu', onContextMenu);
+    window.removeEventListener('select-slot', onSelectSlot);
+    scene.remove(blockHighlight);
+    highlightGeo.dispose();
+    edges.dispose();
+    highlightMat.dispose();
     scene.traverse((o)=>{
       const m=o as Mesh; if(m.geometry) m.geometry.dispose();
       const mt=m.material; if(mt){if(Array.isArray(mt))mt.forEach(x=>(x as MeshStandardMaterial).dispose());else(mt as MeshStandardMaterial).dispose();}

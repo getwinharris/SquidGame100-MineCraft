@@ -4,6 +4,7 @@
   "private": true,
   "description": "SquidGame100 MineCraft — a 100-player, permadeath, Squid Game–themed voxel battle-royale in the browser.",
   "license": "UNLICENSED",
+  "type": "module",
   "engines": {
     "node": ">=20"
   },

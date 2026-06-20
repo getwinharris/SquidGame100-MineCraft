@@ -1,44 +1,36 @@
 # SquidGame100 MineCraft — Roadmap
 
-Approved 2026-06-20. Two phases: rebuild full Minecraft as our **own** engine,
-then layer the 100-player permadeath Squid Game battle-royale on top. We are a
-standalone recreation — not a Minecraft mod — but our data formats follow the
-[Minecraft Wiki](https://minecraft.wiki/) so assets are portable and familiar
-(16×16 PNG textures, JSON block models, JSON blockstates, `.mcfunction`).
+Approved 2026-06-20. Standalone recreation of Minecraft (not a mod), layered with a 100-player permadeath Squid Game battle-royale. 
 
-Every stage ships runnable: `npm run typecheck` + `npm run build` exit 0, the
-client smoke (`render_game_to_text` / `advanceTime`) and server `/healthz` keep
-working. Stages merge PR-driven: PR → CI green → `game-reviewer` PASS → CEO
-merges → tag.
+**Standard:** All mechanics and assets must match the [Minecraft Wiki](https://minecraft.wiki/). No hardcoded colors; no "placeholders." If it's not in the Wiki, it's not in the game. Every stage ships runnable: `npm run typecheck` + `npm run build` exit 0, the client smoke (`render_game_to_text` / `advanceTime`) and server `/healthz` keep working. Stages merge PR-driven: PR → CI green → `game-reviewer` PASS → CEO merges → tag.
 
-## Phase A — Minecraft engine core
+## Phase A — Minecraft Engine Core
 
-| Stage | Deliverable | Exit criteria |
+| Stage | Deliverable | Exit Criteria |
 |---|---|---|
-| **A1.1** | Chunk store (16×16×`WORLD_HEIGHT`), block registry (state-keyed), deterministic unit | World holds/serializes blocks; reads/writes by voxel coord |
-| **A1.2** | Greedy meshing in a Web Worker; chunk geometry pipeline | Chunk edits remesh without jank; worker off main thread |
-| **A1.3** | First-person controller: pointer-lock, WASD, jump, gravity, AABB voxel collision, fly toggle | Walk/fly/collide through a flat/test voxel field |
-| **A1.4** | Raycast break/place, block hotbar, mining tiers + hardness + drops | Mine and place blocks; correct tool/speed |
-| **A2** | Asset pipeline: texture atlas from 16×16 PNG, block-model JSON parser (`parent`/`elements`/`faces`/`textures`), blockstate JSON, UV mapping into mesher | A block renders from its model+texture files, not hardcoded |
-| **A3** | Inventory + crafting: inventory UI, crafting grid, JSON recipe registry (vanilla format), item stacks | Craft items via recipes |
-| **A4** | World generation: deterministic noise terrain, biomes, ores, trees (seed via `shared/rng`) | Same seed → same world |
-| **A5** | Redstone: dust/torches/repeaters, power propagation, basic contraptions | A working redstone circuit |
-| **A6** | Mobs + entities: entity system, mob AI, spawning, health/damage, pathfinding | Hostile/passive mobs live and behave |
+| **A1.1** | Voxel Chunk Store & Registry | 16×16×64 chunks, block registry (ID $\rightarrow$ Type), deterministic seed-based generation. |
+| **A1.2** | Greedy Meshing (Worker) | High-performance geometry pipeline running off-main-thread. |
+| **A1.3** | First-Person Controller | Pointer-lock, WASD, jump, gravity, AABB voxel collision, fly toggle. |
+| **A1.4** | Block Interaction | Raycast break/place, mining tiers (hardness), item drops. |
+| **A1.5** | Game Modes | Survival vs. Creative (infinite blocks, flight, instant-break). |
+| **A1.6** | Day/Night Cycle | 20-minute deterministic cycle, sun/moon movement, lighting shifts. |
+| **A2** | Asset Pipeline | 16×16 PNG textures, JSON block models (`parent`/`elements`/`faces`), blockstates. |
+| **A3** | Inventory & Crafting | Inventory UI, crafting grid, JSON recipe registry (vanilla format). |
+| **A4** | World Generation | Noise terrain, biomes, ores, trees. |
+| **A5** | Redstone | Dust, torches, repeaters, power propagation. |
+| **A6** | Mobs & Entities | Entity system, AI, spawning, health, pathfinding. |
 
-## Phase B — Squid Game battle-royale
+## Phase B — Squid Game Battle-Royale
 
 | Stage | Deliverable |
 |---|---|
-| **B1** | Authoritative netcode: 100-player rooms, client prediction + reconciliation, entity interpolation, spectators |
-| **B2** | Match flow + permadeath: lobby → match → elimination→spectator → last-one-standing |
-| **B3** | Squid Game island: hand-authored arena (dorm, Young-hee, glass bridge, dorm stairs) from Minecraft-format blocks |
-| **B4–B10** | Mini-games: Red Light Green Light, Dalgona, Tug of War, Marbles, Glass Stepping Stones, Mingle, final Squid Game |
-| **B11** | Spectator + streaming polish |
-| **B12** | Production hardening (Caddy/Docker/CI → squidgame100.cloud) |
+| **B1** | Authoritative Netcode | 100-player rooms, prediction, reconciliation, interpolation. |
+| **B2** | Match Flow | Lobby $\rightarrow$ Match $\rightarrow$ Elimination $\rightarrow$ Spectator. |
+| **B3** | Squid Game Island | Hand-authored arena (dorm, playground, bridge, vault) using Minecraft-format blocks. |
+| **B4-B10**| Mini-Games | RLGL (precision movement detection), Dalgona, Tug of War, Marbles, Glass Bridge, Mingle, Final Game. |
+| **B11** | Spectator Polish | Streaming tools, free-cam, event log. |
+| **B12** | Production Hardening | Caddy/Docker/CI $\rightarrow$ squidgame100.cloud. |
 
 ## Done
 
-- **Stage 0** — Foundation: npm-workspace monorepo, `@sg100/shared` (config,
-  RNG, zod protocol), `@sg100/client` (Vite + three.js placeholder scene + WS),
-  `@sg100/server` (Fastify health + `/ws` handshake), Docker/Caddy, GitHub
-  Actions CI + tag deploy, DOX chain + agent harness. Merged via PR #1.
+- **Stage 0** — Foundation: Monorepo, Shared/Client/Server shells, Docker/Caddy, CI/CD, DOX chain.

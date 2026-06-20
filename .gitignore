@@ -36,10 +36,3 @@ coverage/
 # Docker
 docker-compose.override.yml
 output/
-
-# Test/QA run artifacts (keep harness source, ignore generated reports/screenshots)
-.harness/qa/**/play-*.json
-.harness/qa/**/play-*.png
-.harness/qa/**/2026-*.json
-.harness/qa/**/2026-*.png
-.harness/qa/**/protocol-probe.out.json

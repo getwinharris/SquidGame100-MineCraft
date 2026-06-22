@@ -784,8 +784,8 @@ function updateMob(mob: Mob, dt: number, playerPos: Vec3, difficulty: string): v
       break;
   }
 
-  mob.vel.y += GRAVITY * dt;
-  mob.vel.y = Math.max(mob.vel.y, -40);
+  mob.vel.y += GRAVITY_SEC * dt;
+  mob.vel.y = Math.max(mob.vel.y, TERMINAL_VEL_SEC);
 
   mob.pos.x += mob.vel.x * dt;
   mob.pos.z += mob.vel.z * dt;
@@ -864,11 +864,25 @@ function initPlayer(): PlayerState {
   };
 }
 
-const GRAVITY = -22;
-const JUMP_VEL = 8;
-const WALK_SPEED = 5;
-const HEAD_H = 1.65;
-const PW = 0.35;
+// wiki-source: https://minecraft.wiki/w/Transportation#Vertical_transportation
+// Per-tick (50ms) gravity: -0.08 blocks/tick, air friction: ×0.98
+// wiki-source: https://minecraft.wiki/w/Player
+// Player hitbox: 1.8 blocks tall, 0.6 blocks wide; eye level: 1.62m
+// wiki-source: https://minecraft.wiki/w/Transportation#Movement_speed
+// Terminal velocity: 3.92 blocks/tick = 78.4 m/s
+const TICK_MS = 50;
+const TICK_S = 0.05;
+// Gravity per tick, converted to per-second for non-tick-based systems
+const GRAVITY_SEC = -32;
+const TERMINAL_VEL_SEC = -78.4;
+// wiki-source: https://minecraft.wiki/w/Transportation#Movement_speed
+// Walking speed: 4.317 m/s, Sprint: 5.612 m/s (130% of walk)
+// Sneak: 1.295 m/s (30% of walk), Flying: 10.79 m/s
+const WALK_SPEED = 4.317;
+const SPRINT_MULT = 1.3;
+const FLY_SPEED = 10.79;
+const EYE_H = 1.62;
+const HALF_W = 0.3;
 
 function solid(id: number): boolean {
   return id !== BLOCK.AIR && id !== BLOCK.WATER && id !== BLOCK.LAVA;
@@ -877,34 +891,66 @@ function solid(id: number): boolean {
 function aabb(x: number, y: number, z: number): boolean {
   return (
     ([
-      [-PW, 0, -PW], [PW, 0, -PW], [-PW, 0, PW], [PW, 0, PW],
-      [-PW, 1, -PW], [PW, 1, -PW], [-PW, 1, PW], [PW, 1, PW],
+      [-HALF_W, 0, -HALF_W], [HALF_W, 0, -HALF_W], [-HALF_W, 0, HALF_W], [HALF_W, 0, HALF_W],
+      [-HALF_W, 1, -HALF_W], [HALF_W, 1, -HALF_W], [-HALF_W, 1, HALF_W], [HALF_W, 1, HALF_W],
     ] as [number, number, number][])
     .some(([dx, dy, dz]) => solid(getBlock(Math.floor(x + dx), Math.floor(y + dy), Math.floor(z + dz))))
   );
 }
 
-function updatePlayer(p: PlayerState, dt: number, difficulty: string = 'Normal'): void {
+// wiki-source: https://minecraft.wiki/w/Damage#Fall_damage
+// Formula: damage = max(0, floor((fall_distance - safe_fall_distance) × multiplier))
+// Player: safe_fall_distance = 3 blocks, fall_damage_multiplier = 1
+function calcFallDamage(fallDist: number): number {
+  return Math.max(0, Math.floor((fallDist - 3) * 1));
+}
+
+// wiki-source: https://minecraft.wiki/w/Transportation#Vertical_transportation
+// Jump initial velocity: v(1) = 0.42 blocks/tick (without Jump Boost)
+const JUMP_INITIAL = 0.42;
+
+function tickPlayer(p: PlayerState, difficulty: string): void {
   const wasOnGround = p.onGround;
-  const isSprinting = p.keys.has('ShiftLeft');
   const inWater = getBlock(Math.floor(p.pos.x), Math.floor(p.pos.y), Math.floor(p.pos.z)) === BLOCK.WATER;
-  const waterMul = inWater ? 0.5 : 1;
-  const spd = (isSprinting ? WALK_SPEED * 1.8 : WALK_SPEED) * waterMul;
+  const inLava = getBlock(Math.floor(p.pos.x), Math.floor(p.pos.y), Math.floor(p.pos.z)) === BLOCK.LAVA;
+  const isSprinting = p.keys.has('ShiftLeft');
   p.sprinting = isSprinting;
-  const fw = v3(-Math.sin(p.yaw), 0, -Math.cos(p.yaw));
-  const rt = v3(Math.cos(p.yaw), 0, -Math.sin(p.yaw));
-  const mv = v3(0, 0, 0);
-  if (p.keys.has('KeyW') || p.keys.has('ArrowUp')) { mv.x += fw.x; mv.y += fw.y; mv.z += fw.z; }
-  if (p.keys.has('KeyS') || p.keys.has('ArrowDown')) { mv.x -= fw.x; mv.y -= fw.y; mv.z -= fw.z; }
-  if (p.keys.has('KeyA') || p.keys.has('ArrowLeft')) { mv.x -= rt.x; mv.y -= rt.y; mv.z -= rt.z; }
-  if (p.keys.has('KeyD') || p.keys.has('ArrowRight')) { mv.x += rt.x; mv.y += rt.y; mv.z += rt.z; }
-  p.moving = v3len(mv) > 0.01;
-  if (p.moving) {
-    const len = v3len(mv);
-    if (len > 0) { mv.x = mv.x / len * spd; mv.y = mv.y / len * spd; mv.z = mv.z / len * spd; }
+
+  // --- Horizontal movement ---
+  const fw = { x: -Math.sin(p.yaw), z: -Math.cos(p.yaw) };
+  const rt = { x: Math.cos(p.yaw), z: -Math.sin(p.yaw) };
+  let mx = 0, mz = 0;
+  if (p.keys.has('KeyW') || p.keys.has('ArrowUp')) { mx += fw.x; mz += fw.z; }
+  if (p.keys.has('KeyS') || p.keys.has('ArrowDown')) { mx -= fw.x; mz -= fw.z; }
+  if (p.keys.has('KeyA') || p.keys.has('ArrowLeft')) { mx -= rt.x; mz -= rt.z; }
+  if (p.keys.has('KeyD') || p.keys.has('ArrowRight')) { mx += rt.x; mz += rt.z; }
+  p.moving = Math.sqrt(mx * mx + mz * mz) > 0.01;
+
+  if (p.gameMode !== 'creative' || !p.flying) {
+    // wiki-source: https://minecraft.wiki/w/Transportation#Movement_speed
+    // Base acceleration: 0.098 blocks/tick, friction 0.546 (most blocks)
+    // Simplified: apply target speed directly (matches terminal speed a/(1-r) = 4.317)
+    const targetSpeed = isSprinting ? WALK_SPEED * SPRINT_MULT : WALK_SPEED;
+    const waterMult = inWater ? 0.5 : 1.0;
+    const lavaMult = inLava ? 0.5 : 1.0;
+    const mult = waterMult * lavaMult;
+    if (p.moving) {
+      const len = Math.sqrt(mx * mx + mz * mz);
+      const ts = targetSpeed * mult * TICK_S; // blocks per tick
+      p.vel.x += (mx / len * ts - p.vel.x) * 0.2;
+      p.vel.z += (mz / len * ts - p.vel.z) * 0.2;
+    } else {
+      p.vel.x *= 0.8;
+      p.vel.z *= 0.8;
+      if (Math.abs(p.vel.x) < 0.001) p.vel.x = 0;
+      if (Math.abs(p.vel.z) < 0.001) p.vel.z = 0;
+    }
   }
+
+  // --- Vertical movement ---
   const spaceDown = p.keys.has('Space');
   const shiftDown = p.keys.has('ShiftLeft') || p.keys.has('ShiftRight');
+
   if (p.gameMode === 'creative') {
     if (spaceDown && !p._spaceWasDown) {
       if (performance.now() - p._lastSpacePress < 500) {
@@ -913,123 +959,171 @@ function updatePlayer(p: PlayerState, dt: number, difficulty: string = 'Normal')
       p._lastSpacePress = performance.now();
     }
     p._spaceWasDown = spaceDown;
+
     if (p.flying) {
       p.vel.y = 0;
-      if (spaceDown) p.vel.y = JUMP_VEL;
-      else if (shiftDown) p.vel.y = -JUMP_VEL;
+      if (spaceDown) p.vel.y = FLY_SPEED * TICK_S;
+      else if (shiftDown) p.vel.y = -FLY_SPEED * TICK_S;
       p.fallDistance = 0;
+      p.onGround = false;
     }
   }
+
   if (!(p.gameMode === 'creative' && p.flying)) {
-    if (p.keys.has('Space') && p.onGround) {
-      p.vel.y = (inWater ? JUMP_VEL * 0.6 : JUMP_VEL);
+    // wiki-source: https://minecraft.wiki/w/Jumping#Jump_height
+    // Jump initial velocity: 0.42 blocks/tick, height: 1.2522 blocks
+    if (spaceDown && p.onGround) {
+      const jumpVel = inWater ? JUMP_INITIAL * 0.6 : JUMP_INITIAL;
+      p.vel.y = jumpVel;
       p.onGround = false;
       if (p.gameMode === 'survival') {
-        const jumpCost = 0.05;
-        if (p.saturation >= jumpCost) {
-          p.saturation -= jumpCost;
+        // wiki-source: https://minecraft.wiki/w/Jumping#Sprint-jumping
+        // Exhaustion per jump: 0.05, per sprint-jump: 0.2
+        // wiki-source: https://minecraft.wiki/w/Hunger#Mechanics
+        const exhaustion = isSprinting ? 0.2 : 0.05;
+        if (p.saturation >= exhaustion) {
+          p.saturation -= exhaustion;
         } else {
-          const remaining = jumpCost - p.saturation;
+          const remaining = exhaustion - p.saturation;
           p.saturation = 0;
           p.hunger = Math.max(0, p.hunger - remaining);
         }
         p.saturation = Math.min(p.saturation, p.hunger);
       }
     }
-    p.vel.y += GRAVITY * dt;
-    p.vel.y = Math.max(p.vel.y, -40);
+
+    // wiki-source: https://minecraft.wiki/w/Transportation#Vertical_transportation
+    // Per-tick: v(t) = 0.98 × (v(t-1) - 0.08)
+    p.vel.y = (p.vel.y - 0.08) * 0.98;
+
+    // wiki-source: https://minecraft.wiki/w/Transportation#Movement_speed
+    // Terminal velocity: 3.92 blocks/tick = 78.4 m/s
+    if (p.vel.y < -3.92) p.vel.y = -3.92;
   }
-  if (inWater) { p.vel.x *= 0.8; p.vel.z *= 0.8; }
-  p.pos.x += (mv.x + p.vel.x) * dt;
-  if (aabb(p.pos.x, p.pos.y - HEAD_H, p.pos.z)) { p.pos.x -= (mv.x + p.vel.x) * dt; p.vel.x = 0; }
-  p.pos.z += (mv.z + p.vel.z) * dt;
-  if (aabb(p.pos.x, p.pos.y - HEAD_H, p.pos.z)) { p.pos.z -= (mv.z + p.vel.z) * dt; p.vel.z = 0; }
-  p.pos.y += p.vel.y * dt;
-  if (aabb(p.pos.x, p.pos.y - HEAD_H, p.pos.z)) {
+
+  // --- Water drag ---
+  if (inWater) {
+    // wiki-source: https://minecraft.wiki/w/Transportation#Movement_speed
+    // Water drag: velocity damped each tick
+    p.vel.x *= 0.8;
+    p.vel.z *= 0.8;
+    p.vel.y *= 0.8;
+    p.fallDistance = 0;
+  }
+
+  // --- Collision & position update ---
+  p.pos.x += p.vel.x;
+  if (aabb(p.pos.x, p.pos.y, p.pos.z)) { p.pos.x -= p.vel.x; p.vel.x = 0; }
+  p.pos.z += p.vel.z;
+  if (aabb(p.pos.x, p.pos.y, p.pos.z)) { p.pos.z -= p.vel.z; p.vel.z = 0; }
+  p.pos.y += p.vel.y;
+  if (aabb(p.pos.x, p.pos.y, p.pos.z)) {
     if (p.vel.y < 0) p.onGround = true;
-    p.pos.y -= p.vel.y * dt;
+    p.pos.y -= p.vel.y;
     p.vel.y = 0;
   } else {
     p.onGround = false;
   }
+
+  // --- Fall distance tracking ---
   if (p.gameMode === 'creative') {
     p.fallDistance = 0;
+  } else if (p.vel.y < 0 && !p.onGround) {
+    // wiki-source: fall distance tracked in blocks (not time)
+    p.fallDistance -= p.vel.y;
   }
-  if (p.vel.y < 0 && !p.onGround) {
-    p.fallDistance -= p.vel.y * dt;
-  }
+
+  // --- Fall damage ---
   if (wasOnGround === false && p.onGround && p.fallDistance > 0) {
-    const wetLanding = inWater || getBlock(Math.floor(p.pos.x), Math.floor(p.pos.y - HEAD_H + 0.5), Math.floor(p.pos.z)) === BLOCK.WATER;
+    const wetLanding = inWater || getBlock(Math.floor(p.pos.x), Math.floor(p.pos.y), Math.floor(p.pos.z)) === BLOCK.WATER;
     if (!wetLanding) {
-      const damage = Math.max(0, Math.floor(p.fallDistance) - 3);
+      const damage = calcFallDamage(p.fallDistance);
+      // wiki-source: https://minecraft.wiki/w/Damage#Fall_damage
+      // A fall of ≥23.5 blocks kills a player at 20HP (the game checks ground before updating fall distance)
       if (damage > 0) {
         p.health = Math.max(0, p.health - damage);
       }
     }
     p.fallDistance = 0;
   }
-  if (inWater) {
-    p.fallDistance = 0;
-  }
+
+  // --- Hunger depletion (survival only) ---
+  // wiki-source: https://minecraft.wiki/w/Hunger#Mechanics
+  // Exhaustion per action: sprint-jump 0.2, jump 0.05, sprint 0.01/block
   if (p.gameMode === 'survival') {
-    const passiveDepletion = dt * 1.0;
-    const sprintDepletion = (p.sprinting && p.moving) ? dt * 0.5 : 0;
-    const totalDepletion = passiveDepletion + sprintDepletion;
-    if (p.saturation >= totalDepletion) {
-      p.saturation -= totalDepletion;
-    } else {
-      const remaining = totalDepletion - p.saturation;
-      p.saturation = 0;
-      p.hunger = Math.max(0, p.hunger - remaining);
+    const passiveExhaustion = 0.0; // walking/sneaking costs 0 hunger since 1.11
+    const sprintExhaustion = (p.sprinting && p.moving) ? 0.01 : 0;
+    const exhaustion = passiveExhaustion + sprintExhaustion;
+    if (exhaustion > 0) {
+      if (p.saturation >= exhaustion) {
+        p.saturation -= exhaustion;
+      } else {
+        const remaining = exhaustion - p.saturation;
+        p.saturation = 0;
+        p.hunger = Math.max(0, p.hunger - remaining);
+      }
+      p.saturation = Math.min(p.saturation, p.hunger);
     }
-    p.saturation = Math.min(p.saturation, p.hunger);
   }
 
+  // --- Health regeneration ---
+  // wiki-source: https://minecraft.wiki/w/Player#Health_and_hunger_meters
+  // Health regenerates by 1HP every 4 seconds when hunger ≥ 18 (no regen below 18)
   if (p.gameMode === 'survival' && p.health > 0 && p.health < 20) {
     if (p.hunger >= 18) {
-      p._regenTimer += dt;
-      while (p._regenTimer >= 4.0 && p.health < 20 && p.hunger >= 18) {
+      p._regenTimer += TICK_MS;
+      while (p._regenTimer >= 4000 && p.health < 20 && p.hunger >= 18) {
         p.health = Math.min(20, p.health + 1);
         p.hunger = Math.max(0, p.hunger - 1);
-        p._regenTimer -= 4.0;
+        p._regenTimer -= 4000;
       }
     }
   }
 
+  // Peaceful difficulty auto-regen
   if (difficulty === 'Peaceful' && p.health < 20 && p.health > 0) {
-    p.health = Math.min(20, p.health + dt * 1.0);
+    p.health = Math.min(20, p.health + 0.5 / TICK_S * TICK_MS / 1000);
   }
 
+  // --- Starvation ---
+  // wiki-source: https://minecraft.wiki/w/Damage#Starvation
+  // Starvation deals 1HP damage per second when hunger = 0
   if (p.gameMode === 'survival' && p.hunger <= 0) {
-    p._starvationTimer += dt;
-    while (p._starvationTimer >= 1.0 && p.health > 0) {
-      p.health = Math.max(0, p.health - 0.5);
-      p._starvationTimer -= 1.0;
-    }
-  }
-  if (p.pos.y < -10) { p.pos.y = 100; v3set(p.vel, 0, 0, 0); }
-  const feetBlock = getBlock(Math.floor(p.pos.x), Math.floor(p.pos.y - HEAD_H + 0.5), Math.floor(p.pos.z));
-  if (feetBlock === BLOCK.WATER) {
-    const flow = getFlowDirection(getBlock, Math.floor(p.pos.x), Math.floor(p.pos.y - HEAD_H + 0.5), Math.floor(p.pos.z));
-    if (flow) {
-      p.vel.x += flow.dx * dt * 5;
-      p.vel.z += flow.dz * dt * 5;
-      if (flow.dy < 0) p.vel.y -= dt * 10;
+    p._starvationTimer += TICK_MS;
+    while (p._starvationTimer >= 1000 && p.health > 0) {
+      p.health = Math.max(0, p.health - 1);
+      p._starvationTimer -= 1000;
     }
   }
 
+  // --- Void death ---
+  if (p.pos.y < -10) { p.pos.y = 100; v3set(p.vel, 0, 0, 0); }
+
+  // --- Water flow ---
+  const feetBlock = getBlock(Math.floor(p.pos.x), Math.floor(p.pos.y), Math.floor(p.pos.z));
+  if (feetBlock === BLOCK.WATER) {
+    const flow = getFlowDirection(getBlock, Math.floor(p.pos.x), Math.floor(p.pos.y), Math.floor(p.pos.z));
+    if (flow) {
+      p.vel.x += flow.dx * 0.014;
+      p.vel.z += flow.dz * 0.014;
+      if (flow.dy < 0) p.vel.y -= 0.02;
+    }
+  }
+
+  // --- Oxygen ---
+  // wiki-source: https://minecraft.wiki/w/Player#Health_and_hunger_meters
+  // Player has 300 ticks (15 seconds) of air; depletes at 1/tick when head in water
+  const headInWater = getBlock(Math.floor(p.pos.x), Math.floor(p.pos.y + EYE_H), Math.floor(p.pos.z)) === BLOCK.WATER;
   if (p.gameMode === 'creative') {
     p.oxygen = 300;
-  } else if (inWater) {
-    p.oxygen -= dt * 20;
-    if (p.oxygen <= 0) {
-      p.oxygen = 0;
-      if (difficulty !== 'Peaceful') {
-        p.health = Math.max(0, p.health - dt * 1.0);
-      }
+  } else if (headInWater) {
+    p.oxygen = Math.max(0, p.oxygen - 1);
+    if (p.oxygen <= 0 && difficulty !== 'Peaceful') {
+      // wiki-source: Drowning damage: 1HP per tick when oxygen reaches 0
+      p.health = Math.max(0, p.health - 1);
     }
   } else {
-    p.oxygen = Math.min(300, p.oxygen + dt * 20);
+    p.oxygen = Math.min(300, p.oxygen + 1);
   }
 
   if (p.health <= 0 && !p.isDead) {
@@ -1262,7 +1356,7 @@ function renderFrameWebGL(canvas: HTMLCanvasElement, player: PlayerState): void 
 
   const proj = createPerspective(1.2, W / H, 0.1, 512);
   const eyeX = player.pos.x;
-  const eyeY = player.pos.y + 1.6;
+  const eyeY = player.pos.y + EYE_H;
   const eyeZ = player.pos.z;
   const yaw = player.yaw;
   const pitch = player.pitch;
@@ -1523,7 +1617,7 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
   const onMouseDown = (e: MouseEvent) => {
     if (!player.isPointerLocked) return;
 
-    const eyePos = v3(player.pos.x, player.pos.y, player.pos.z);
+    const eyePos = v3(player.pos.x, player.pos.y + EYE_H, player.pos.z);
     const hit = rayMarch(eyePos, player.yaw, player.pitch, 6);
 
     // Check for mob interaction (simple proximity along look direction)
@@ -1703,9 +1797,9 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
 
         if (getBlock(nx, ny, nz) !== BLOCK.AIR) return;
 
-        const overlapX = (player.pos.x - PW < nx + 0.5) && (player.pos.x + PW > nx - 0.5);
-        const overlapY = (player.pos.y - HEAD_H < ny + 0.5) && (player.pos.y - HEAD_H + 1.8 > ny - 0.5);
-        const overlapZ = (player.pos.z - PW < nz + 0.5) && (player.pos.z + PW > nz - 0.5);
+        const overlapX = (player.pos.x - HALF_W < nx + 0.5) && (player.pos.x + HALF_W > nx - 0.5);
+        const overlapY = (player.pos.y < ny + 0.5) && (player.pos.y + 1.8 > ny - 0.5);
+        const overlapZ = (player.pos.z - HALF_W < nz + 0.5) && (player.pos.z + HALF_W > nz - 0.5);
         if (overlapX && overlapY && overlapZ) return;
 
         const blockHeldItem = inventory.getSlot(SLOT.HOTBAR_START + inventory.selectedHotbar);
@@ -1941,12 +2035,21 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
   let lastTarget: BlockHit | null = null;
   void lastTarget;
 
-  let raf = 0, lastT = performance.now();
-  const animate = () => {
-    raf = requestAnimationFrame(animate);
-    const now = performance.now(), dt = Math.min((now - lastT) / 1000, 0.05);
-    lastT = now;
-    attackCooldown = Math.max(0, attackCooldown - dt);
+    // Tick-based physics (20Hz = 50ms per tick, matching Minecraft Java Edition)
+    let raf = 0, lastT = performance.now(), tickAccum = 0;
+    const animate = () => {
+      raf = requestAnimationFrame(animate);
+      const now = performance.now();
+      tickAccum += Math.min(now - lastT, 100);
+      const frameDt = (now - lastT) / 1000;
+      lastT = now;
+      attackCooldown = Math.max(0, attackCooldown - frameDt);
+
+      while (tickAccum >= TICK_MS) {
+        tickPlayer(player, difficulty);
+        tickAccum -= TICK_MS;
+      }
+      const dt = frameDt; // for non-physics timers still using dt
 
     // Weather
     const timeOfDay = player.daytime;
@@ -2047,11 +2150,9 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
       }
     }
 
-    updatePlayer(player, dt, difficulty);
-
     // Eating timer
     if (isEating && eatingItem !== null) {
-      eatingProgress += dt;
+      eatingProgress += frameDt;
       if (eatingProgress >= EATING_DURATION) {
         const props = getItemProperties(eatingItem);
         if (props?.foodPoints) {
@@ -2101,8 +2202,7 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
     }
 
     // Block highlight via ray marching
-    const eyePos = v3(player.pos.x, player.pos.y, player.pos.z);
-    const targetHit = player.isPointerLocked ? rayMarch(eyePos, player.yaw, player.pitch, 6) : null;
+    const targetHit = player.isPointerLocked ? rayMarch(v3(player.pos.x, player.pos.y + EYE_H, player.pos.z), player.yaw, player.pitch, 6) : null;
     lastTarget = targetHit;
 
     // Weather update
@@ -2158,10 +2258,10 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
     totalBlocks: '5.49 quadrillion (Earth surface area)',
   });
   window.advanceTime = (ms: number): void => {
-    const steps = Math.max(1, Math.round(ms / (1000 / 60)));
+    const steps = Math.max(1, Math.round(ms / TICK_MS));
     for (let i = 0; i < steps; i++) {
-      attackCooldown = Math.max(0, attackCooldown - 1 / 60);
-      updatePlayer(player, 1 / 60, difficulty);
+      attackCooldown = Math.max(0, attackCooldown - TICK_S);
+      tickPlayer(player, difficulty);
     }
   };
 

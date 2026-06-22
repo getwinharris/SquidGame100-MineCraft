@@ -1296,8 +1296,11 @@ function getHeldToolType(selectedBlock: number): { toolType: ToolType; toolTier:
   return { toolType: 'none', toolTier: 0, toolId: 0 };
 }
 
-function getBlockDrops(blockId: number, toolType: ToolType = 'none'): number[] {
+function getBlockDrops(blockId: number, toolType: ToolType = 'none', toolTier: number = 0): number[] {
   const props = getBlockProperties(blockId);
+  if (props.requiredTool === 'pickaxe' && (toolType !== 'pickaxe' || toolTier < props.minToolTier)) {
+    return [];
+  }
   if (props.silkTouch) {
     if (toolType === 'shears' && props.requiredTool === 'shears') {
       return [blockId];
@@ -1916,8 +1919,8 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
   const breakBlock = (bx: number, by: number, bz: number, blockId: number) => {
     setBlock(bx, by, bz, BLOCK.AIR);
     sounds.playTone(200, 'square', 0.1);
-    const { toolType } = getHeldToolType(player.selectedBlock);
-    const drops = getBlockDrops(blockId, toolType);
+    const { toolType, toolTier } = getHeldToolType(player.selectedBlock);
+    const drops = getBlockDrops(blockId, toolType, toolTier);
     drops.forEach(itemId => addDropToInventory(itemId));
     if (drops.length > 0) {
       showNotification('+' + drops.length + ' ' + getBlockName(drops[0]));

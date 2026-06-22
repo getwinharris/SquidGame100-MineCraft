@@ -43,13 +43,13 @@ P[BLOCK.WATER] = b(100,500,0,true,false,false,false,false,'none',0,true);
 P[BLOCK.LAVA] = b(100,500,15,true,false,false,true,false,'none',0,true);
 P[BLOCK.SAND] = b(0.5,0.5,0,false,true,false,true,false,'shovel',0);
 P[BLOCK.GRAVEL] = b(0.6,0.6,0,false,true,false,true,false,'shovel',0);
-P[BLOCK.IRON_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',2);
+P[BLOCK.IRON_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',1);
 P[BLOCK.COAL_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',0);
-P[BLOCK.GOLD_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',3);
-P[BLOCK.DIAMOND_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',3);
-P[BLOCK.REDSTONE_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',3);
-P[BLOCK.LAPIS_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',2);
-P[BLOCK.OBSIDIAN] = b(50,1200,0,false,true,false,false,false,'pickaxe',4);
+P[BLOCK.GOLD_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',2);
+P[BLOCK.DIAMOND_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',2);
+P[BLOCK.REDSTONE_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',2);
+P[BLOCK.LAPIS_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',1);
+P[BLOCK.OBSIDIAN] = b(50,1200,0,false,true,false,false,false,'pickaxe',3);
 P[BLOCK.NETHERRACK] = b(0.4,0.4,0,false,true,false,false,false,'pickaxe',0);
 P[BLOCK.SOUL_SAND] = b(0.5,0.5,0,false,true,false,false,false,'shovel',0);
 P[BLOCK.GLOWSTONE] = b(0.3,0.3,15,true,false,false,false,false,'none',0);
@@ -62,12 +62,12 @@ P[BLOCK.ICE] = b(0.5,0.5,0,true,false,false,false,false,'pickaxe',0);
 P[BLOCK.CLAY] = b(0.6,0.6,0,false,true,false,false,false,'shovel',0);
 P[BLOCK.CACTUS] = b(0.4,0.4,0,false,true,false,false,false,'none',0);
 P[BLOCK.SANDSTONE] = b(0.8,0.8,0,false,true,false,false,false,'pickaxe',0);
-P[BLOCK.IRON_BLOCK] = b(5,6,0,false,true,false,false,false,'pickaxe',1);
-P[BLOCK.DIAMOND_BLOCK] = b(5,6,0,false,true,false,false,false,'pickaxe',2);
-P[BLOCK.GOLD_BLOCK] = b(3,6,0,false,true,false,false,false,'pickaxe',2);
-P[BLOCK.EMERALD_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',3);
-P[BLOCK.EMERALD_BLOCK] = b(5,6,0,false,true,false,false,false,'pickaxe',2);
-P[BLOCK.LAPIS_BLOCK] = b(3,3,0,false,true,false,false,false,'pickaxe',1);
+P[BLOCK.IRON_BLOCK] = b(5,6,0,false,true,false,false,false,'pickaxe',0);
+P[BLOCK.DIAMOND_BLOCK] = b(5,6,0,false,true,false,false,false,'pickaxe',1);
+P[BLOCK.GOLD_BLOCK] = b(3,6,0,false,true,false,false,false,'pickaxe',1);
+P[BLOCK.EMERALD_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',2);
+P[BLOCK.EMERALD_BLOCK] = b(5,6,0,false,true,false,false,false,'pickaxe',1);
+P[BLOCK.LAPIS_BLOCK] = b(3,3,0,false,true,false,false,false,'pickaxe',0);
 P[BLOCK.REDSTONE_BLOCK] = b(5,6,0,false,true,false,false,false,'pickaxe',0);
 P[BLOCK.COAL_BLOCK] = b(5,6,0,false,true,false,false,false,'pickaxe',0);
 P[BLOCK.CRAFTING_TABLE] = b(2.5,2.5,0,false,true,false,false,true,'axe',0);
@@ -92,7 +92,7 @@ P[BLOCK.MYCELIUM] = b(0.6,0.6,0,false,true,false,false,false,'shovel',0);
 P[BLOCK.ENCHANTING_TABLE] = b(5,1200,7,false,true,false,false,false,'pickaxe',0);
 P[BLOCK.BREWING_STAND] = b(0.5,0.5,1,false,true,false,false,false,'pickaxe',0);
 P[BLOCK.END_STONE] = b(3,9,0,false,true,false,false,false,'pickaxe',0);
-P[BLOCK.DRAGON_EGG] = b(3,9,1,false,true,false,false,false,'pickaxe',3);
+P[BLOCK.DRAGON_EGG] = b(3,9,1,false,true,false,false,false,'pickaxe',2);
 P[BLOCK.NETHER_BRICK] = b(2,6,0,false,true,false,false,false,'pickaxe',0);
 P[BLOCK.NETHER_WART] = b(0,0,0,true,false,false,false,false,'none',0,true);
 P[BLOCK.NETHER_BRICK_FENCE] = b(2,6,0,true,false,false,false,false,'pickaxe',0);
@@ -253,9 +253,11 @@ for (const id of [290,291,292,293,294,295,296,297,298,299,300,301,302,303,304,30
 }
 // Wool colors
 for (const id of [306,307,308,309,310,311,312,313,314,315,316,317,318,319,320,321]) {
-  P[id] = b(0.8,0.8,0,false,true,false,false,true,'shears',0);
+  P[id] = b(0.8,0.8,0,false,true,false,false,true,'none',0); // wiki-source: https://minecraft.wiki/w/Wool
 }
 
+P[BLOCK.DRIED_KELP_BLOCK] = b(0.5,2.5,0,false,true,false,false,true,'none',0); // wiki-source: https://minecraft.wiki/w/Dried_Kelp_Block
+P[BLOCK.TARGET] = b(0.5,0.5,0,false,true,false,false,true,'none',0); // wiki-source: https://minecraft.wiki/w/Target
 P[BLOCK.COBWEB] = b(4,4,0,true,false,false,false,false,'shears',0); // wiki-source: https://minecraft.wiki/w/Cobweb
 
 export function getBlockProperties(blockId: number): BlockProperties {

@@ -31,7 +31,7 @@ function registry() {
       { id: 'shared', path: 'packages/shared', label: '@sg100/shared', role: 'Protocol, config, registry' },
       { id: 'client', path: 'packages/client', label: '@sg100/client', role: 'Vite + three.js browser client' },
       { id: 'server', path: 'packages/server', label: '@sg100/server', role: 'Fastify + WebSocket server' },
-
+      { id: 'docker',  path: 'packages/docker',  label: 'Docker',          role: 'Container & proxy assets' },
     ],
     modules: [
       { file: 'packages/shared/src/index.ts',        workspace: 'shared', exports: ['blocks','blockRegistry','config','rng','protocol','textureUrls'] },
@@ -55,11 +55,16 @@ function registry() {
       'packages/server/package.json', 'packages/server/tsconfig.json',
       'packages/shared/package.json', 'packages/shared/tsconfig.json',
     ],
-    deploy: [],
+    deploy: [
+      'docker-compose.yml',
+      'packages/docker/client.Dockerfile',
+      'packages/docker/server.Dockerfile',
+      'packages/docker/Caddyfile',
+    ],
     dox: [
       'AGENTS.md', 'packages/AGENTS.md',
       'packages/client/AGENTS.md', 'packages/server/AGENTS.md',
-      'packages/shared/AGENTS.md',
+      'packages/shared/AGENTS.md', 'packages/docker/AGENTS.md',
       '.github/AGENTS.md', '.harness/AGENTS.md',
     ],
     docs: [

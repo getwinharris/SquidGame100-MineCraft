@@ -2,16 +2,22 @@
   "name": "@sg100/client",
   "version": "0.1.0",
   "private": true,
-  "description": "SquidGame100 MineCraft browser client — Canvas 2D.",
+  "description": "SquidGame100 MineCraft browser client — Vite + three.js + Web Workers.",
   "type": "module",
   "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "preview": "vite preview --port 5173",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@sg100/shared": "*"
+    "@sg100/shared": "*",
+    "three": "^0.171.0"
   },
   "devDependencies": {
-    "typescript": "^5.7.2"
+    "@types/three": "^0.171.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
   }
 }

@@ -1,5 +1,6 @@
 import { BLOCK, type BlockId } from '@sg100/shared';
-import { setBlock, getElevation } from './scene.js';
+import { setBlock, getElevation, rebuildWorldMesh } from './scene.js';
+import type { Scene } from 'three';
 
 export type LandmarkType = 'eiffel_tower' | 'niagara_falls' | 'white_house' | 'taj_mahal';
 
@@ -300,10 +301,11 @@ export function placeLandmarkStructure(cx: number, groundY: number, cz: number, 
   }
 }
 
-export function placeAllLandmarks(): void {
+export function placeAllLandmarks(scene: Scene): void {
   for (const lm of LANDMARKS) {
     const [wx, wz] = latLngToBlock(lm.lat, lm.lng);
     const groundY = getElevation(wx, wz);
     placeLandmarkStructure(wx, groundY, wz, lm.type);
   }
+  rebuildWorldMesh(scene);
 }

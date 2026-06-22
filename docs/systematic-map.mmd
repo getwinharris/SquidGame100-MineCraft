@@ -11,12 +11,13 @@ flowchart LR
   classDef ci fill:#f3f4f6,stroke:#4b5563,color:#1f2937
   classDef npm fill:#fafafa,stroke:#9e9e9e,color:#424242
   classDef gap fill:#ff1744,stroke:#d50000,color:#ffffff
-  %% Summary: {"files":782,"modules":11,"npm_packages":3,"import_edges":6,"gap_count":1}
+  %% Summary: {"files":782,"modules":11,"npm_packages":4,"import_edges":7,"gap_count":6}
 
   subgraph WORKSPACES["Workspaces"]
     ws_shared["@sg100/shared\nProtocol, config, registry"]:::workspace
     ws_client["@sg100/client\nVite + three.js browser client"]:::workspace
     ws_server["@sg100/server\nFastify + WebSocket server"]:::workspace
+    ws_docker["Docker\nContainer & proxy assets"]:::workspace
   end
 
   subgraph MOD_SHARED["shared modules"]
@@ -63,6 +64,10 @@ flowchart LR
   end
 
   subgraph DEPLOY["Deployment"]
+    dep_4e5e90c6228f["docker-compose.yml"]:::deploy
+    dep_9551651dcb30["client.Dockerfile"]:::deploy
+    dep_bfece3e10be4["server.Dockerfile"]:::deploy
+    dep_6803eac4f4cc["Caddyfile"]:::deploy
   end
 
   subgraph DOX["DOX (AGENTS.md)"]
@@ -71,6 +76,7 @@ flowchart LR
     dox_ca2d6a7590ed["client"]:::dox
     dox_c0d2d0473bab["server"]:::dox
     dox_79bed11741a0["shared"]:::dox
+    dox_54cb9c078056["docker"]:::dox
     dox_6ccb0c1fd449[".github"]:::dox
     dox_78539403181b[".harness"]:::dox
   end
@@ -114,7 +120,12 @@ flowchart LR
   end
 
   subgraph GAP["Gaps & Missing Links"]
-    gap_0["[medium] no_web_workers\nscene.ts runs on main thread, no greedy meshing worker"]:::gap
+    gap_0["[medium] dox_missing\npackages/docker/AGENTS.md declared in registry but not on disk"]:::gap
+    gap_1["[high] deploy_missing\ndocker-compose.yml declared in registry but not on disk"]:::gap
+    gap_2["[high] deploy_missing\npackages/docker/client.Dockerfile declared in registry but not on disk"]:::gap
+    gap_3["[high] deploy_missing\npackages/docker/server.Dockerfile declared in registry but not on disk"]:::gap
+    gap_4["[high] deploy_missing\npackages/docker/Caddyfile declared in registry but not on disk"]:::gap
+    gap_5["[medium] no_web_workers\nscene.ts runs on main thread, no greedy meshing worker"]:::gap
   end
 
   %% Workspace dependencies
@@ -128,6 +139,7 @@ flowchart LR
 
   %% npm package usage
   mod_1769cb4ac51b -.uses.-> npm_zod
+  mod_f63c4faf7db8 -.uses.-> npm_three
   mod_544c6c6d49ee -.uses.-> npm_fastify
   mod_544c6c6d49ee -.uses.-> npm_ws
 
@@ -156,3 +168,8 @@ flowchart LR
 
   %% Gap edges
   GAP -.-> gap_0
+  GAP -.-> gap_1
+  GAP -.-> gap_2
+  GAP -.-> gap_3
+  GAP -.-> gap_4
+  GAP -.-> gap_5

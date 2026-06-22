@@ -23,6 +23,11 @@ interface Renderer {
   program: WebGLProgram;
   uMvp: WebGLUniformLocation;
   uTexture: WebGLUniformLocation;
+  uFogColor: WebGLUniformLocation;
+  uFogDensity: WebGLUniformLocation;
+  uFogEnabled: WebGLUniformLocation;
+  uNear: WebGLUniformLocation;
+  uFar: WebGLUniformLocation;
   aPos: number;
   aUv: number;
   atlas: WebGLTexture;
@@ -139,11 +144,19 @@ void main() {
 precision highp float;
 in vec2 vUv;
 uniform sampler2D uTexture;
+uniform vec3 uFogColor;
+uniform float uFogDensity;
+uniform float uFogEnabled;
+uniform float uNear;
+uniform float uFar;
 out vec4 fragColor;
 void main() {
   vec4 tex = texture(uTexture, vUv);
   if (tex.a < 0.5) discard;
-  fragColor = tex;
+  float zNdc = gl_FragCoord.z * 2.0 - 1.0;
+  float depth = 2.0 * uNear * uFar / (uFar + uNear - zNdc * (uFar - uNear));
+  float fog = clamp(1.0 - exp(-uFogDensity * depth), 0.0, 1.0);
+  fragColor = mix(tex, vec4(uFogColor, 1.0), mix(1.0, fog, uFogEnabled));
 }`);
 
   if (!vs || !fs) return null;
@@ -158,9 +171,15 @@ void main() {
 
   gl.uniform1i(uTexture, 0);
 
+  const uFogColor = gl.getUniformLocation(program, 'uFogColor')!;
+  const uFogDensity = gl.getUniformLocation(program, 'uFogDensity')!;
+  const uFogEnabled = gl.getUniformLocation(program, 'uFogEnabled')!;
+  const uNear = gl.getUniformLocation(program, 'uNear')!;
+  const uFar = gl.getUniformLocation(program, 'uFar')!;
+
   const atlasData = buildTextureAtlas(gl);
 
-  return { gl, program, uMvp, uTexture, aPos, aUv, atlas: atlasData.atlas, atlasEntries: atlasData.entries };
+  return { gl, program, uMvp, uTexture, uFogColor, uFogDensity, uFogEnabled, uNear, uFar, aPos, aUv, atlas: atlasData.atlas, atlasEntries: atlasData.entries };
 }
 
 function resizeRenderer(r: Renderer, w: number, h: number): void {
@@ -346,6 +365,18 @@ const W = {
   SEA_LEVEL: 64,
   GROUND_LEVEL: 62,
 };
+// wiki-source: https://minecraft.wiki/w/Fog#Water_fog
+// Initial fog obscures at ~0.01 blocks (25% at 0s, 60% at 5s, 100% at 30s), transitions to biome fog over 30s
+const NEAR_PLANE = 0.1;
+const FAR_PLANE = 512;
+const FOG_TRANSITION_DURATION = 30;
+// wiki-source: https://minecraft.wiki/w/Water#Appearance — Java Edition table
+// wiki-source: https://minecraft.wiki/w/Fog#Water_fog
+const BIOME_FOG: Record<string, [number, number, number, number]> = {
+  ocean: [0x00, 0x0A, 0x1A, 25],   // cold/frozen ocean: #000A1A, 25 blocks
+  swamp: [0x23, 0x23, 0x17, 4],    // #232317, 4 blocks
+  default: [0x05, 0x05, 0x33, 8],  // #050533, 8 blocks (used by most biomes including river, warm/lukewarm ocean, cold ocean)
+};
 
 type BlockId = (typeof BLOCK)[keyof typeof BLOCK];
 
@@ -363,6 +394,9 @@ const chunks = new Map<string, Chunk>();
 let renderer: Renderer | null = null;
 let overlayCanvas: HTMLCanvasElement | null = null;
 let overlayCtx: CanvasRenderingContext2D | null = null;
+
+let underwaterStartTime = 0;
+let wasUnderwater = false;
 
 function chunkKey(cx: number, cz: number): string {
   return cx + ',' + cz;
@@ -828,6 +862,7 @@ interface PlayerState {
   fallDistance: number;
   gameMode: GameMode;
   flying: boolean;
+  nightVision: boolean;
   _lastSpacePress: number;
   _spaceWasDown: boolean;
   _regenTimer: number;
@@ -857,6 +892,7 @@ function initPlayer(): PlayerState {
     fallDistance: 0,
     gameMode: 'creative',
     flying: false,
+    nightVision: false,
     _lastSpacePress: 0,
     _spaceWasDown: false,
     _regenTimer: 0,
@@ -1344,19 +1380,55 @@ function isSolid(id: number): boolean {
 function renderFrameWebGL(canvas: HTMLCanvasElement, player: PlayerState): void {
   if (!renderer) return;
   const gl = renderer.gl;
-  const W = canvas.width, H = canvas.height;
-  if (W === 0 || H === 0) return;
+  const canvasW = canvas.width, H = canvas.height;
+  if (canvasW === 0 || H === 0) return;
+
+  // Underwater fog
+  const wx = Math.floor(player.pos.x), wz = Math.floor(player.pos.z);
+  const eyeY = player.pos.y + EYE_H;
+  const eyeBlock = getBlock(wx, Math.floor(eyeY), Math.floor(player.pos.z));
+  const inWater = eyeBlock === BLOCK.WATER;
+  let fogR = 0, fogG = 0, fogB = 0, fogDist = 999, fogEnabled = 0;
+  if (inWater) {
+    if (!wasUnderwater) { underwaterStartTime = performance.now(); wasUnderwater = true; }
+    const underwaterTime = (performance.now() - underwaterStartTime) / 1000;
+    const elev = getElevation(wx, wz);
+    const temp = getTemperature(wx, wz);
+    const moist = getMoisture(wx, wz);
+    let fogBiome = 'default';
+    if (elev < W.SEA_LEVEL - 8) fogBiome = 'ocean';
+    else if (temp > 0.5 && moist > 0.7 && elev >= W.SEA_LEVEL - 3 && elev <= W.SEA_LEVEL + 2) fogBiome = 'swamp';
+    const fc = BIOME_FOG[fogBiome];
+    fogR = fc[0] / 255; fogG = fc[1] / 255; fogB = fc[2] / 255;
+    const maxDist = fc[3];
+    const t = Math.min(underwaterTime / FOG_TRANSITION_DURATION, 1);
+    fogDist = 0.01 + (maxDist - 0.01) * t;
+    // wiki-source: https://minecraft.wiki/w/Night_Vision
+    if (player.nightVision) fogDist *= 3;
+    // approximate: wiki describes depth-dependent visibility reduction
+    // wiki-source: https://minecraft.wiki/w/Water#Fog
+    for (let y = W.CHUNK_H - 1; y >= Math.floor(eyeY); y--) {
+      if (getBlock(wx, y, wz) === BLOCK.WATER) {
+        const depthBelow = (y + 1) - eyeY;
+        if (depthBelow > 0) fogDist -= depthBelow * 2;
+        break;
+      }
+    }
+    fogDist = Math.max(0.01, fogDist);
+    fogEnabled = 1;
+  } else {
+    wasUnderwater = false;
+  }
 
   const skyCol = interpolateSkyColor(player.daytime);
   const skyR = ((skyCol >> 16) & 0xff) / 255;
   const skyG = ((skyCol >> 8) & 0xff) / 255;
   const skyB = (skyCol & 0xff) / 255;
-  gl.clearColor(skyR, skyG, skyB, 1);
+  gl.clearColor(fogEnabled > 0 ? fogR : skyR, fogEnabled > 0 ? fogG : skyG, fogEnabled > 0 ? fogB : skyB, 1);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-  const proj = createPerspective(1.2, W / H, 0.1, 512);
+  const proj = createPerspective(1.2, canvasW / H, NEAR_PLANE, FAR_PLANE);
   const eyeX = player.pos.x;
-  const eyeY = player.pos.y + EYE_H;
   const eyeZ = player.pos.z;
   const yaw = player.yaw;
   const pitch = player.pitch;
@@ -1365,6 +1437,12 @@ function renderFrameWebGL(canvas: HTMLCanvasElement, player: PlayerState): void 
   const cz = eyeZ + Math.cos(yaw) * Math.cos(pitch);
   const view = lookAt(eyeX, eyeY, eyeZ, cx, cy, cz, 0, 1, 0);
   const mvp = mulMat4(proj, view);
+
+  gl.uniform3f(renderer.uFogColor, fogR, fogG, fogB);
+  gl.uniform1f(renderer.uFogDensity, fogDist > 0 ? 4.605 / fogDist : 100);
+  gl.uniform1f(renderer.uFogEnabled, fogEnabled);
+  gl.uniform1f(renderer.uNear, NEAR_PLANE);
+  gl.uniform1f(renderer.uFar, FAR_PLANE);
 
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, renderer.atlas);
@@ -2027,8 +2105,6 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
   initRainDrops();
 
   // Track last frame's target for highlight rendering
-  let lastTarget: BlockHit | null = null;
-  void lastTarget;
 
     // Tick-based physics (20Hz = 50ms per tick, matching Minecraft Java Edition)
     let raf = 0, lastT = performance.now(), tickAccum = 0;
@@ -2198,7 +2274,6 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
 
     // Block highlight via ray marching
     const targetHit = player.isPointerLocked ? rayMarch(v3(player.pos.x, player.pos.y + EYE_H, player.pos.z), player.yaw, player.pitch, 6) : null;
-    lastTarget = targetHit;
 
     // Weather update
     const isPrecip = weatherType === 'rain' || weatherType === 'snow';

@@ -128,13 +128,13 @@ When the user requests a durable behavior change, record it here or in the relev
 
 ### GitHub Remote Workflow (2026-06-22)
 
-**`origin/main` IS the GitHub remote.** Committing locally then pushing to `origin/main` lands code on the GitHub remote repository at `https://github.com/getwinharris/SquidGame100-MineCraft.git`.
+**`origin/main` is a local tracking branch, not the remote.** The actual remote is at `https://github.com/getwinharris/SquidGame100-MineCraft.git`.
 
-- `origin` = the remote repository on GitHub. `origin/main` = the main branch on GitHub.
-- `git push origin main` ships local commits to the remote GitHub repo.
+- `origin` = remote URL/config pointing to GitHub. `origin/main` = local tracking branch synced via `git fetch`.
+- `git push origin main` ships local `main` commits to the remote's `main` branch on GitHub.
+- After push, local `origin/main` updates to match. Before trusting `origin/main`, run `git fetch origin` first.
+- To verify what actually landed on GitHub, use `gh api repos/getwinharris/SquidGame100-MineCraft/commits` — NOT the local `origin/main` ref.
 - Before pushing: run `npm run typecheck` and `npm run build` to verify.
-- After pushing: verify commits landed by checking `gh api repos/getwinharris/SquidGame100-MineCraft/commits`.
-- Do not confuse `origin/main` with a local-only concept — it is the actual remote on GitHub.
 
 ### Execution Standards (2026-06-22)
 

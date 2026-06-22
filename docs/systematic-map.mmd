@@ -1,0 +1,165 @@
+flowchart LR
+  classDef workspace fill:#e3f2fd,stroke:#1976d2,color:#0d47a1
+  classDef module fill:#ecfdf5,stroke:#047857,color:#064e3b
+  classDef config fill:#fef3c7,stroke:#b45309,color:#78350f
+  classDef deploy fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d
+  classDef dox fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
+  classDef doc fill:#f5f5f5,stroke:#757575,color:#212121
+  classDef test fill:#ede9fe,stroke:#6d28d9,color:#3b0764
+  classDef harness fill:#ecfdf5,stroke:#059669,color:#064e3b
+  classDef issue fill:#fef2f2,stroke:#dc2626,color:#991b1b
+  classDef ci fill:#f3f4f6,stroke:#4b5563,color:#1f2937
+  classDef npm fill:#fafafa,stroke:#9e9e9e,color:#424242
+  classDef gap fill:#ff1744,stroke:#d50000,color:#ffffff
+  %% Summary: {"files":787,"modules":11,"npm_packages":4,"import_edges":7,"gap_count":1}
+
+  subgraph WORKSPACES["Workspaces"]
+    ws_shared["@sg100/shared\nProtocol, config, registry"]:::workspace
+    ws_client["@sg100/client\nVite + three.js browser client"]:::workspace
+    ws_server["@sg100/server\nFastify + WebSocket server"]:::workspace
+    ws_docker["Docker\nContainer & proxy assets"]:::workspace
+  end
+
+  subgraph MOD_SHARED["shared modules"]
+    mod_21821d6d4273["index.ts\nexports: blocks, blockRegistry, config, rng..."]:::module
+    mod_b74f08e6d180["blocks.ts\nexports: BLOCK, VANILLA_BLOCK_IDS, BLOCK_COLORS, BLOCK_TEXTURES..."]:::module
+    mod_59b70ee5611d["blockRegistry.ts\nexports: BlockRegistry, blockRegistry, BlockModel, BlockState..."]:::module
+    mod_6c9dde7ef55c["config.ts\nexports: PROJECT_NAME, PROTOCOL_VERSION, MAX_PLAYERS_PER_ROOM, SERVER_TICK_HZ..."]:::module
+    mod_1769cb4ac51b["protocol.ts\nexports: HelloMessageSchema, PingMessageSchema, ClientMessageSchema, WelcomeMessageSchema..."]:::module
+    mod_94de254da76c["rng.ts\nexports: createRng, hashSeed"]:::module
+    mod_61ed6f06b9fb["textureUrls.ts\nexports: getTextureUrl"]:::module
+  end
+
+  subgraph MOD_CLIENT["client modules"]
+    mod_188a6f522e58["main.ts"]:::module
+    mod_f63c4faf7db8["scene.ts\nexports: createScene"]:::module
+    mod_c60f6217a9fe["net.ts\nexports: connectToServer"]:::module
+  end
+
+  subgraph MOD_SERVER["server modules"]
+    mod_544c6c6d49ee["index.ts"]:::module
+  end
+
+  subgraph NPM["npm packages"]
+    npm_three["three"]:::npm
+    npm_zod["zod"]:::npm
+    npm_fastify["fastify"]:::npm
+    npm_ws["ws"]:::npm
+  end
+
+  subgraph CONFIG["Config"]
+    cfg_b9cfc7f2cdf7["package.json"]:::config
+    cfg_bd08939a7f74["tsconfig.base.json"]:::config
+    cfg_e7f6d45c8af2["eslint.config.js"]:::config
+    cfg_ff25e0d5bd5e[".prettierrc.json"]:::config
+    cfg_23949df756e1[".prettierignore"]:::config
+    cfg_a084b794bc07[".gitignore"]:::config
+    cfg_30a035b5c9df["client/pkg.json"]:::config
+    cfg_1d0b340b7dce["client/tsconfig"]:::config
+    cfg_49c137df3b0d["client/vite.config.ts"]:::config
+    cfg_8c42f42f65d0["server/pkg.json"]:::config
+    cfg_f9fa0eb3c81c["server/tsconfig"]:::config
+    cfg_ab6458f6838f["shared/pkg.json"]:::config
+    cfg_b7aaf361f3c3["shared/tsconfig"]:::config
+  end
+
+  subgraph DEPLOY["Deployment"]
+    dep_4e5e90c6228f["docker-compose.yml"]:::deploy
+    dep_9551651dcb30["client.Dockerfile"]:::deploy
+    dep_bfece3e10be4["server.Dockerfile"]:::deploy
+    dep_6803eac4f4cc["Caddyfile"]:::deploy
+  end
+
+  subgraph DOX["DOX (AGENTS.md)"]
+    dox_bc5441b46c60["root AGENTS.md"]:::dox
+    dox_d6b6bace75ac["AGENTS.md"]:::dox
+    dox_ca2d6a7590ed["client"]:::dox
+    dox_c0d2d0473bab["server"]:::dox
+    dox_79bed11741a0["shared"]:::dox
+    dox_54cb9c078056["docker"]:::dox
+    dox_6ccb0c1fd449[".github"]:::dox
+    dox_78539403181b[".harness"]:::dox
+  end
+
+  subgraph DOCS["Docs"]
+    doc_04c6e90faac2["README.md"]:::doc
+    doc_887a0d2cbc14["docs/systematic-map.mmd"]:::doc
+  end
+
+  subgraph TEST["Tests"]
+    test_93acd3d81f7e["test-game.spec.ts"]:::test
+  end
+
+  subgraph HARNESS["Harness (agent team)"]
+    harn_398583b85005["agent.md"]:::harness
+    harn_91b66b6b9f82["plans/stage0-smoke.yaml"]:::harness
+    harn_b7bdc105c8d9["qa/smoke/stage0-smoke.mjs"]:::harness
+    harn_53ee8949f323["qa/smoke/protocol-probe.mjs"]:::harness
+    harn_1a1911110a87["qa/smoke/discovery.mjs"]:::harness
+    harn_ef065ed3cce5["qa/playability/playability.mjs"]:::harness
+    harn_74c315e9d73d["reins/browser-qa/agent.md"]:::harness
+    harn_a67d2ed27475["reins/game-fixer/agent.md"]:::harness
+    harn_3a8a9f5c18f6["reins/game-reviewer/agent.md"]:::harness
+    harn_597d5a616e3e["reins/player-1/agent.md"]:::harness
+  end
+
+  subgraph ISSUES["Issues"]
+    iss_0264c22478fd["01-protocol-not-strict.md"]:::issue
+    iss_f76cc338fcdf["02-ping-t-no-sanity.md"]:::issue
+    iss_16f3e47c94f7["03-bad-message-not-disambiguated.md"]:::issue
+    iss_ee19e0f29577["04-hello-not-idempotent.md"]:::issue
+    iss_8cef78a32f50["05-client-onerror-conflates-protocol-and-transport.md"]:::issue
+    iss_c4668ef32fa9["06-rtt-uses-echoed-t.md"]:::issue
+    iss_c0f97ce05e5c["README.md"]:::issue
+    iss_a68d9d2b6518["research-mcpi-revival.md"]:::issue
+  end
+
+  subgraph CI["CI (.github)"]
+    ci_e9f950f17198["ci.yml"]:::ci
+    ci_3680803a67ea["deploy.yml"]:::ci
+  end
+
+  subgraph GAP["Gaps & Missing Links"]
+    gap_0["[medium] no_web_workers\nscene.ts runs on main thread, no greedy meshing worker"]:::gap
+  end
+
+  %% Workspace dependencies
+  cfg_30a035b5c9df --> cfg_ab6458f6838f
+  cfg_8c42f42f65d0 --> cfg_ab6458f6838f
+
+  %% Module imports
+  mod_f63c4faf7db8 --> mod_21821d6d4273
+  mod_c60f6217a9fe --> mod_21821d6d4273
+  mod_544c6c6d49ee --> mod_21821d6d4273
+
+  %% npm package usage
+  mod_1769cb4ac51b -.uses.-> npm_zod
+  mod_f63c4faf7db8 -.uses.-> npm_three
+  mod_544c6c6d49ee -.uses.-> npm_fastify
+  mod_544c6c6d49ee -.uses.-> npm_ws
+
+  %% DOX ownership
+  dox_bc5441b46c60 --> dox_d6b6bace75ac
+  dox_d6b6bace75ac --> dox_ca2d6a7590ed
+  dox_d6b6bace75ac --> dox_c0d2d0473bab
+  dox_d6b6bace75ac --> dox_79bed11741a0
+  dox_d6b6bace75ac --> dox_54cb9c078056
+  dox_bc5441b46c60 --> dox_6ccb0c1fd449
+  dox_bc5441b46c60 --> dox_78539403181b
+
+  %% Deploy references
+  dep_4e5e90c6228f -.ref.-> dep_9551651dcb30
+  dep_4e5e90c6228f -.ref.-> dep_bfece3e10be4
+  dep_4e5e90c6228f -.ref.-> dep_6803eac4f4cc
+
+  %% Config references
+  cfg_1d0b340b7dce -.ref.-> cfg_bd08939a7f74
+  cfg_f9fa0eb3c81c -.ref.-> cfg_bd08939a7f74
+  cfg_b7aaf361f3c3 -.ref.-> cfg_bd08939a7f74
+  cfg_49c137df3b0d -.ref.-> cfg_188a6f522e58
+
+  %% Test targets
+  test_93acd3d81f7e -.tests.-> ws_client
+
+  %% Gap edges
+  GAP -.-> gap_0

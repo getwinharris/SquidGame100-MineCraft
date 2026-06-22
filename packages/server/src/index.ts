@@ -1,11 +1,12 @@
 import Fastify from 'fastify';
-import { WebSocketServer, type WebSocket } from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
 import {
   msg,
   parseClientMessage,
   PROJECT_NAME,
   PROTOCOL_VERSION,
   SERVER_TICK_HZ,
+  SERVER_TICK_MS,
 } from '@sg100/shared';
 
 const port = Number.parseInt(process.env.PORT ?? '8080', 10);
@@ -41,6 +42,8 @@ app.server.on('upgrade', (request, socket, head) => {
     wss.emit('connection', ws, request);
   });
 });
+
+let worldTick = 0;
 
 wss.on('connection', (ws: WebSocket) => {
   ws.on('message', (raw) => {
@@ -80,3 +83,22 @@ wss.on('connection', (ws: WebSocket) => {
 });
 
 await app.listen({ host, port });
+
+const tickInterval = setInterval(() => {
+  worldTick++;
+  const tickMsg = JSON.stringify(msg({ type: 'tick', tick: worldTick, time: Date.now() }));
+  for (const client of wss.clients) {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(tickMsg);
+    }
+  }
+}, SERVER_TICK_MS);
+
+process.on('SIGTERM', () => {
+  clearInterval(tickInterval);
+  app.close();
+});
+process.on('SIGINT', () => {
+  clearInterval(tickInterval);
+  app.close();
+});

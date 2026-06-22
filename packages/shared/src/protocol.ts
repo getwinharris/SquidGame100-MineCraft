@@ -73,10 +73,19 @@ export const ErrorMessageSchema = z.object({
 });
 export type ErrorMessage = z.infer<typeof ErrorMessageSchema>;
 
+export const TickMessageSchema = z.object({
+  ...envelope,
+  type: z.literal('tick'),
+  tick: z.number().int().nonnegative(),
+  time: z.number().int(),
+});
+export type TickMessage = z.infer<typeof TickMessageSchema>;
+
 export const ServerMessageSchema = z.discriminatedUnion('type', [
   WelcomeMessageSchema,
   PongMessageSchema,
   ErrorMessageSchema,
+  TickMessageSchema,
 ]);
 export type ServerMessage = z.infer<typeof ServerMessageSchema>;
 

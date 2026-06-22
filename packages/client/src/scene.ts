@@ -29,29 +29,11 @@ interface Renderer {
   atlasEntries: Map<string, AtlasEntry>;
 }
 
-function loadImage(url: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('Failed to load ' + url));
-    img.src = url;
-  });
-}
-
 const ATLAS_TILE = 16;
 const ATLAS_COLS = 16;
 
-function buildTextureAtlas(gl: WebGL2RenderingContext): { atlas: WebGLTexture; entries: Map<string, AtlasEntry> } | null {
-  const canvas = document.createElement('canvas');
+function buildTextureAtlas(gl: WebGL2RenderingContext): { atlas: WebGLTexture; entries: Map<string, AtlasEntry> } {
   const size = ATLAS_TILE * ATLAS_COLS;
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d')!;
-
-  ctx.fillStyle = '#000000';
-  ctx.fillRect(0, 0, size, size);
-
   const entries = new Map<string, AtlasEntry>();
   let slotIndex = 0;
 
@@ -73,44 +55,46 @@ function buildTextureAtlas(gl: WebGL2RenderingContext): { atlas: WebGLTexture; e
     }
   }
 
-  const missingEntry: AtlasEntry = { u: 0, v: 0, uw: 0.0625, vh: 0.0625 };
-  entries.set('__missing__', missingEntry);
+  entries.set('__missing__', { u: (ATLAS_COLS - 1) / ATLAS_COLS, v: (ATLAS_COLS - 1) / ATLAS_COLS, uw: 1 / ATLAS_COLS, vh: 1 / ATLAS_COLS });
 
-  // Draw checkerboard for missing/broken textures
-  ctx.fillStyle = '#000000';
-  ctx.fillRect(0, 0, ATLAS_TILE, ATLAS_TILE);
-  for (let py = 0; py < ATLAS_TILE; py++) {
-    for (let px = 0; px < ATLAS_TILE; px++) {
-      const isMagenta = ((px >> 3) + (py >> 3)) % 2 === 0;
-      ctx.fillStyle = isMagenta ? '#ff00ff' : '#000000';
+  // Canvas for the atlas — fill with magenta/black checkerboard (missing texture pattern)
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  for (let py = 0; py < size; py++) {
+    for (let px = 0; px < size; px++) {
+      ctx.fillStyle = ((px >> 3) + (py >> 3)) % 2 === 0 ? '#ff00ff' : '#000000';
       ctx.fillRect(px, py, 1, 1);
     }
   }
 
-  // Load textures asynchronously
-  Promise.all(Array.from(entries.entries()).map(async ([url, entry]) => {
-    if (url === '__missing__') return;
-    try {
-      const img = await loadImage('/textures/blocks/' + url);
-      const col = Math.round(entry.u * ATLAS_COLS);
-      const row = Math.round(entry.v * ATLAS_COLS);
-      ctx.drawImage(img, col * ATLAS_TILE, row * ATLAS_TILE, ATLAS_TILE, ATLAS_TILE);
-    } catch {
-      // leave slot as missing texture
-    }
-  })).then(() => {
-    const texture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-  });
+  // Upload placeholder atlas synchronously
+  const texture = gl.createTexture()!;
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-  return { atlas: null as unknown as WebGLTexture, entries };
+  // Load real textures asynchronously and patch into atlas
+  const colRowFromEntry = (entry: AtlasEntry): [number, number] => [
+    Math.round(entry.u * ATLAS_COLS),
+    Math.round(entry.v * ATLAS_COLS),
+  ];
+  for (const [url, entry] of entries) {
+    if (url === '__missing__') continue;
+    const img = new Image();
+    const [col, row] = colRowFromEntry(entry);
+    img.onload = () => {
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, col * ATLAS_TILE, row * ATLAS_TILE, ATLAS_TILE, ATLAS_TILE, gl.RGBA, gl.UNSIGNED_BYTE, img);
+    };
+    img.src = '/textures/blocks/' + url;
+  }
+
+  return { atlas: texture, entries };
 }
 
 function getAtlasEntry(atlas: Map<string, AtlasEntry>, blockId: number, face: number): AtlasEntry {
@@ -175,7 +159,6 @@ void main() {
   gl.uniform1i(uTexture, 0);
 
   const atlasData = buildTextureAtlas(gl);
-  if (!atlasData) return null;
 
   return { gl, program, uMvp, uTexture, aPos, aUv, atlas: atlasData.atlas, atlasEntries: atlasData.entries };
 }

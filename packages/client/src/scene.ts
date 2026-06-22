@@ -1736,12 +1736,7 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
           const { toolType, toolTier, toolId } = getHeldToolType(player.selectedBlock);
           const harvestTime = getHarvestTime(blockId, toolId, toolType, toolTier);
           if (mining.active && mining.targetX === bx && mining.targetY === by && mining.targetZ === bz) {
-            mining.progress += 1 / 60;
-            if (mining.progress >= mining.total) {
-              breakBlock(bx, by, bz, blockId);
-              mining.active = false;
-              mining.progress = 0;
-            }
+            // progress handled by animate loop
           } else {
             mining.targetX = bx;
             mining.targetY = by;

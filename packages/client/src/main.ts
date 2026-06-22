@@ -1,7 +1,7 @@
 /**
  * Client entry point.
  *
- * Stage 0: boot a minimal three.js scene in the Squid Game palette and open a
+ * Stage 0: boot a minimal Canvas 2D scene in the Squid Game palette and open a
  * WebSocket to the server, surfacing the connection state in the HUD. This
  * proves the render loop and the network pipe before the voxel engine (Stage 1)
  * and netcode (Stage 3) land.
@@ -37,13 +37,11 @@ function main(): void {
     onError: () => setStatus('<span class="err">● connection error</span>'),
   });
 
-  // Hot-module reload cleanup in dev.
-  if (import.meta.hot) {
-    import.meta.hot.dispose(() => {
-      stopNetwork();
-      stopScene();
-    });
-  }
+  // Cleanup on page unload
+  window.addEventListener('beforeunload', () => {
+    stopNetwork();
+    stopScene();
+  });
 }
 
 /** Build a WS URL that works in dev (proxied) and prod (same origin via Caddy). */

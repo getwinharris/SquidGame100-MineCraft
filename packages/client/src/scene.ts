@@ -1,45 +1,34 @@
 /**
- * MineCraft — Real Earth World Engine
+ * MineCraft — Real Earth World Engine (WebGL 2.0)
  *
  * 1 block = 1 square foot.
  * Earth surface area = 5.49 × 10^15 ft² (5.49 quadrillion blocks).
  * World generates from real Earth elevation/biome data.
  * Streaming: only chunks around player are loaded.
+ * Renders with raw WebGL 2.0 — zero dependencies.
  */
 
-import {
-  BoxGeometry,
-  CanvasTexture,
-  Color,
-  DirectionalLight,
-  Fog,
-  InstancedMesh,
-  Mesh,
-  MeshLambertMaterial,
-  MeshStandardMaterial,
-  PerspectiveCamera,
-  Scene,
-  Texture,
-  TextureLoader,
-  Vector3,
-  WebGLRenderer,
-  Object3D,
-  HemisphereLight,
-  Group,
-  Raycaster,
-  Vector2,
-  Matrix4,
-  LineSegments,
-  EdgesGeometry,
-  LineBasicMaterial,
-  NearestFilter,
-  SRGBColorSpace,
-} from 'three';
-import { BLOCK, getTextureUrl, getItemTextureFile, generateTappablesForChunk, rollTappableDrops, isTappableActive, TAPPABLE_DEFINITIONS, getBlockProperties, getHarvestTime, getItemProperties, ITEM, Inventory, SLOT, findRecipe, findFurnaceSmeltingRecipes, MOB_PROPERTIES, tickFluid, getFlowDirection, createsCobblestone, createsObsidian, createsStone, isWater, isLava, createRng } from '@sg100/shared';
+import { BLOCK, getTextureUrl, getItemTextureFile, generateTappablesForChunk, rollTappableDrops, isTappableActive, getBlockProperties, getHarvestTime, getItemProperties, ITEM, Inventory, SLOT, findRecipe, findFurnaceSmeltingRecipes, MOB_PROPERTIES, tickFluid, getFlowDirection, createsCobblestone, createsObsidian, createsStone, isWater, isLava, createRng } from '@sg100/shared';
 import type { Tappable, ToolType, MobType, GameMode } from '@sg100/shared';
 import { placeAllLandmarks } from './landmarks.js';
+import { initRenderer, resizeRenderer, createPerspective, lookAt, mulMat4, buildChunkMesh, renderChunkMesh, deleteChunkMesh } from './webgl-renderer.js';
+import type { Renderer, ChunkMesh } from './webgl-renderer.js';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// --- Vec3 (native replacement for THREE.Vector3) --------------------------
+interface Vec3 { x: number; y: number; z: number; }
+
+function v3(x = 0, y = 0, z = 0): Vec3 { return { x, y, z }; }
+function v3dist(a: Vec3, b: Vec3): number {
+  const dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+}
+function v3len(a: Vec3): number { return Math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z); }
+function v3scale(a: Vec3, s: number): Vec3 { return v3(a.x * s, a.y * s, a.z * s); }
+function v3sub(a: Vec3, b: Vec3): Vec3 { return v3(a.x - b.x, a.y - b.y, a.z - b.z); }
+function v3dot(a: Vec3, b: Vec3): number { return a.x * b.x + a.y * b.y + a.z * b.z; }
+function v3set(a: Vec3, x: number, y: number, z: number): Vec3 { a.x = x; a.y = y; a.z = z; return a; }
+
+// --- Constants ---------------------------------------------------------------
 const W = {
   CHUNK_W: 16,
   CHUNK_H: 256,
@@ -51,19 +40,23 @@ const W = {
 
 type BlockId = (typeof BLOCK)[keyof typeof BLOCK];
 
-// ─── World Storage ────────────────────────────────────────────────────────────
+// --- World Storage -----------------------------------------------------------
 interface Chunk {
   cx: number;
   cz: number;
   blocks: Uint16Array;
   dirty: boolean;
-  mesh?: InstancedMesh;
+  mesh?: ChunkMesh;
 }
 
 const chunks = new Map<string, Chunk>();
 
+let renderer: Renderer | null = null;
+let overlayCanvas: HTMLCanvasElement | null = null;
+let overlayCtx: CanvasRenderingContext2D | null = null;
+
 function chunkKey(cx: number, cz: number): string {
-  return `${cx},${cz}`;
+  return cx + ',' + cz;
 }
 
 function getChunk(cx: number, cz: number): Chunk | undefined {
@@ -111,7 +104,6 @@ export function setBlock(wx: number, wy: number, wz: number, id: BlockId): void 
   if (wy < 0 || wy >= W.CHUNK_H) return;
   chunk.blocks[localIndex(lx, wy, lz)] = id;
   chunk.dirty = true;
-  // Mark neighbors dirty if on chunk edge
   if (lx === 0) markChunkDirty(cx - 1, cz);
   if (lx === W.CHUNK_W - 1) markChunkDirty(cx + 1, cz);
   if (lz === 0) markChunkDirty(cx, cz - 1);
@@ -123,12 +115,22 @@ function markChunkDirty(cx: number, cz: number): void {
   if (chunk) chunk.dirty = true;
 }
 
-// ─── Terrain Generation (Earth-like) ─────────────────────────────────────────
-// Simplex-style noise for elevation, temperature, moisture
+export function rebuildWorldMesh(): void {
+  // Rebuild WebGL meshes for dirty chunks
+  if (!renderer) return;
+  for (const [, chunk] of chunks) {
+    if (chunk.dirty) {
+      if (chunk.mesh) { deleteChunkMesh(renderer, chunk.mesh); chunk.mesh = undefined; }
+      const mesh = buildChunkMesh(renderer, chunk.blocks, chunk.cx, chunk.cz, getBlock, isSolid);
+      if (mesh) chunk.mesh = mesh;
+      chunk.dirty = false;
+    }
+  }
+}
+
+// --- Terrain Generation (Earth-like) ----------------------------------------
 function hash(x: number, z: number): number {
-  let h = x * 374761393 + z * 668265263;
-  h = (h ^ (h >> 13)) * 1274126177;
-  return ((h ^ (h >> 16)) >>> 0) / 4294967296;
+  return createRng(x * 374761393 + z * 668265263).next();
 }
 
 function smoothNoise(x: number, z: number, scale: number): number {
@@ -166,15 +168,13 @@ export function getElevation(wx: number, wz: number): number {
   const erosion = fractalNoise(wx + 10000, wz + 10000, 4, 512);
   const detail = fractalNoise(wx + 20000, wz + 20000, 3, 128);
   const h = continental * 0.6 + erosion * 0.3 + detail * 0.1;
-  // Map 0..1 to height: sea floor 0..50, land 50..120, mountains 120..200
-  if (h < 0.45) return Math.floor(h * 100); // ocean floor
-  if (h < 0.55) return W.SEA_LEVEL; // beach
-  if (h < 0.8) return Math.floor(W.SEA_LEVEL + (h - 0.55) * 200); // hills
-  return Math.floor(W.SEA_LEVEL + 50 + (h - 0.8) * 400); // mountains
+  if (h < 0.45) return Math.floor(h * 100);
+  if (h < 0.55) return W.SEA_LEVEL;
+  if (h < 0.8) return Math.floor(W.SEA_LEVEL + (h - 0.55) * 200);
+  return Math.floor(W.SEA_LEVEL + 50 + (h - 0.8) * 400);
 }
 
 function getTemperature(wx: number, wz: number): number {
-  // Latitude-based: hot at equator, cold at poles
   const lat = Math.abs(wz) / 10000;
   const base = 1 - Math.min(lat, 1);
   const noise = fractalNoise(wx + 30000, wz + 30000, 2, 1024) * 0.3;
@@ -186,16 +186,16 @@ function getMoisture(wx: number, wz: number): number {
 }
 
 function getBiome(_wx: number, _wz: number, elevation: number, temp: number, moist: number): BlockId {
-  if (elevation < W.SEA_LEVEL - 10) return BLOCK.STONE; // deep ocean floor
-  if (elevation < W.SEA_LEVEL) return BLOCK.SAND; // ocean floor
-  if (elevation === W.SEA_LEVEL) return BLOCK.SAND; // beach
-  if (elevation > 140) return BLOCK.SNOW; // high mountains
-  if (temp > 0.7 && moist < 0.3) return BLOCK.SAND; // desert
-  if (temp < 0.2) return BLOCK.SNOW; // tundra
-  if (moist > 0.6 && temp > 0.4) return BLOCK.GRASS; // forest (grass surface with trees)
-  if (moist > 0.5) return BLOCK.GRASS; // woodland
-  if (elevation > 100) return BLOCK.STONE; // high altitude
-  return BLOCK.GRASS; // default temperate
+  if (elevation < W.SEA_LEVEL - 10) return BLOCK.STONE;
+  if (elevation < W.SEA_LEVEL) return BLOCK.SAND;
+  if (elevation === W.SEA_LEVEL) return BLOCK.SAND;
+  if (elevation > 140) return BLOCK.SNOW;
+  if (temp > 0.7 && moist < 0.3) return BLOCK.SAND;
+  if (temp < 0.2) return BLOCK.SNOW;
+  if (moist > 0.6 && temp > 0.4) return BLOCK.GRASS;
+  if (moist > 0.5) return BLOCK.GRASS;
+  if (elevation > 100) return BLOCK.STONE;
+  return BLOCK.GRASS;
 }
 
 function generateChunkTerrain(chunk: Chunk): void {
@@ -226,11 +226,10 @@ function generateChunkTerrain(chunk: Chunk): void {
         }
         chunk.blocks[localIndex(lx, y, lz)] = block;
       }
-      
-      // Generate trees
+
       if (surface === BLOCK.OAK_LEAVES || surface === BLOCK.OAK_PLANKS) {
         const treeHash = hash(wx * 13, wz * 17);
-        if (treeHash > 0.92) { // ~8% chance for trees
+        if (treeHash > 0.92) {
           generateTree(chunk, lx, elev, lz, surface === BLOCK.OAK_LEAVES ? 'oak' : 'birch');
         }
       }
@@ -243,26 +242,24 @@ function generateTree(chunk: Chunk, lx: number, groundY: number, lz: number, tre
   const trunkHeight = treeType === 'oak' ? 4 + Math.floor(hash(lx * 7, lz * 11) * 3) : 5 + Math.floor(hash(lx * 7, lz * 11) * 2);
   const logType = treeType === 'oak' ? BLOCK.OAK_LOG : BLOCK.BIRCH_LOG;
   const leafType = treeType === 'oak' ? BLOCK.OAK_LEAVES : BLOCK.BIRCH_LEAVES;
-  
-  // Place trunk
+
   for (let y = groundY; y < groundY + trunkHeight && y < W.CHUNK_H; y++) {
     if (lx >= 0 && lx < W.CHUNK_W && lz >= 0 && lz < W.CHUNK_D) {
       chunk.blocks[localIndex(lx, y, lz)] = logType;
     }
   }
-  
-  // Place leaves (sphere-like shape)
+
   const leafRadius = 2;
   const leafStart = groundY + trunkHeight - 2;
   const leafEnd = groundY + trunkHeight + 1;
-  
+
   for (let dy = leafStart; dy <= leafEnd; dy++) {
     const radius = dy === leafEnd ? 1 : leafRadius;
     for (let dx = -radius; dx <= radius; dx++) {
       for (let dz = -radius; dz <= radius; dz++) {
-        if (dx === 0 && dz === 0 && dy < groundY + trunkHeight) continue; // skip trunk position
-        if (Math.abs(dx) === radius && Math.abs(dz) === radius && hash(dx + lx, dz + lz) > 0.5) continue; // random corners
-        
+        if (dx === 0 && dz === 0 && dy < groundY + trunkHeight) continue;
+        if (Math.abs(dx) === radius && Math.abs(dz) === radius && hash(dx + lx, dz + lz) > 0.5) continue;
+
         const newLx = lx + dx;
         const newLz = lz + dz;
         if (newLx >= 0 && newLx < W.CHUNK_W && newLz >= 0 && newLz < W.CHUNK_D && dy >= 0 && dy < W.CHUNK_H) {
@@ -275,10 +272,9 @@ function generateTree(chunk: Chunk, lx: number, groundY: number, lz: number, tre
   }
 }
 
-// ─── Tappables (Minecraft Earth-style resource nodes) ──────────────────────
+// --- Tappables (Minecraft Earth-style resource nodes) -----------------------
 const tappables = new Map<string, Tappable>();
-const tappableMeshes = new Map<string, Mesh>();
-const TAPPABLE_CHECK_RADIUS = 8; // chunks around player to spawn tappables
+const TAPPABLE_CHECK_RADIUS = 8;
 
 function spawnTappablesAroundPlayer(px: number, pz: number): void {
   const [pcx, pcz] = worldToChunk(px, pz);
@@ -286,58 +282,15 @@ function spawnTappablesAroundPlayer(px: number, pz: number): void {
     for (let dz = -TAPPABLE_CHECK_RADIUS; dz <= TAPPABLE_CHECK_RADIUS; dz++) {
       const cx = pcx + dx;
       const cz = pcz + dz;
-      const key = `${cx},${cz}`;
+      const key = cx + ',' + cz;
       if (tappables.has(key)) continue;
 
       const newTappables = generateTappablesForChunk(cx, cz, W.CHUNK_W, W.CHUNK_D);
       for (const t of newTappables) {
-        // Set y based on terrain
         t.y = getElevation(t.x, t.z) + 1;
         tappables.set(t.id, t);
       }
     }
-  }
-}
-
-function updateTappableMeshes(scene: Scene, playerPos: Vector3, now: number): void {
-  // Remove meshes for tappables too far away
-  for (const [id, mesh] of tappableMeshes) {
-    const t = tappables.get(id);
-    if (!t || playerPos.distanceTo(new Vector3(t.x, t.y, t.z)) > 128) {
-      scene.remove(mesh);
-      (mesh.geometry as BoxGeometry).dispose();
-      (mesh.material as MeshStandardMaterial).dispose();
-      tappableMeshes.delete(id);
-    }
-  }
-
-  // Add/update meshes for nearby tappables
-  for (const [id, t] of tappables) {
-    if (!isTappableActive(t, now)) continue;
-    if (playerPos.distanceTo(new Vector3(t.x, t.y, t.z)) > 64) continue;
-
-    let mesh = tappableMeshes.get(id);
-    if (!mesh) {
-      const def = TAPPABLE_DEFINITIONS[t.type];
-      const geo = new BoxGeometry(0.8, 0.8, 0.8);
-      const color = getBlockColor(def.blockId);
-      const mat = new MeshStandardMaterial({
-        color,
-        emissive: new Color(color).multiplyScalar(0.3),
-        transparent: true,
-        opacity: 0.9,
-      });
-      mesh = new Mesh(geo, mat);
-      mesh.position.set(t.x, t.y + 0.5, t.z);
-      mesh.userData = { tappableId: id };
-      scene.add(mesh);
-      tappableMeshes.set(id, mesh);
-    }
-
-    // Floating animation
-    const time = now / 1000;
-    mesh.position.y = t.y + 0.5 + Math.sin(time * 2 + t.x * 0.1) * 0.1;
-    mesh.rotation.y = time * 0.5;
   }
 }
 
@@ -348,33 +301,8 @@ function collectTappable(tappableId: string): { itemId: number; count: number }[
   return rollTappableDrops(t.type).map(d => ({ itemId: d.itemId, count: d.count }));
 }
 
-function getBlockColor(blockId: number): number {
-  const colors: Record<number, number> = {
-    [BLOCK.STONE]: 0x777788,
-    [BLOCK.GRASS]: 0x00a86b,
-    [BLOCK.IRON_ORE]: 0x878686,
-    [BLOCK.GOLD_ORE]: 0xbba056,
-    [BLOCK.DIAMOND_ORE]: 0x83cfdb,
-    [BLOCK.LAPIS_ORE]: 0x3456a2,
-    [BLOCK.REDSTONE_ORE]: 0xa42929,
-    [BLOCK.EMERALD_ORE]: 0x17dd63,
-    [BLOCK.CHEST]: 0xb89460,
-    [BLOCK.MOB_SPAWNER]: 0x3a3a3a,
-    [BLOCK.WATER]: 0x3f76e4,
-    [BLOCK.OAK_LOG]: 0x6a5030,
-    [BLOCK.OAK_LEAVES]: 0x3fa53a,
-    [BLOCK.COBBLESTONE]: 0x7a7a7a,
-    [BLOCK.DIRT]: 0x8b6842,
-    [BLOCK.SAND]: 0xc8b560,
-    [BLOCK.GRAVEL]: 0x857b73,
-    [BLOCK.CLAY]: 0xa0a0b0,
-    [BLOCK.SUGARCANE]: 0x85c43c,
-  };
-  return colors[blockId] ?? 0xaaaaaa;
-}
 
-// ─── Mobs (Minecraft Java Edition) ───────────────────────────────────────────
-/** Simple mulberry32 PRNG for deterministic mob spawning */
+// --- Mobs (Minecraft Java Edition) ------------------------------------------
 function mulberry32(a: number): () => number {
   return () => {
     a |= 0; a = a + 0x6D2B79F5 | 0;
@@ -387,52 +315,32 @@ function mulberry32(a: number): () => number {
 interface Mob {
   id: string;
   type: MobType;
-  pos: Vector3;
-  vel: Vector3;
+  pos: Vec3;
+  vel: Vec3;
   health: number;
   maxHealth: number;
   yaw: number;
   onGround: boolean;
-  mesh?: Mesh;
-  /** AI state */
   aiState: 'idle' | 'wander' | 'flee' | 'chase' | 'attack';
   aiTimer: number;
-  /** When this mob was last damaged by player */
   lastAttackedAt: number;
 }
 
 const mobs = new Map<string, Mob>();
-const mobMeshes = new Map<string, Mesh>();
-const MOB_CHECK_RADIUS = 6; // chunks
+const MOB_CHECK_RADIUS = 6;
 const MOB_DESPAWN_DISTANCE = 128;
 let mobIdCounter = 0;
 
-function getMobColor(type: MobType): number {
-  const colors: Record<string, number> = {
-    cow: 0x6b4c3b,
-    pig: 0xf0a5a2,
-    sheep: 0xe7e7e7,
-    chicken: 0xf5f5f5,
-    rabbit: 0xc4a882,
-    zombie: 0x00a86b,
-    skeleton: 0xc8c8c8,
-    creeper: 0x00a86b,
-    spider: 0x4a4a4a,
-    enderman: 0x161616,
-    witch: 0x4a3a6a,
-  };
-  return colors[type] ?? 0xaaaaaa;
-}
 
 function spawnMob(type: MobType, x: number, y: number, z: number): Mob {
   const props = MOB_PROPERTIES[type];
-  if (!props) throw new Error(`Unknown mob type: ${type}`);
-  const id = `mob-${mobIdCounter++}`;
+  if (!props) throw new Error('Unknown mob type: ' + type);
+  const id = 'mob-' + (mobIdCounter++);
   const mob: Mob = {
     id,
     type,
-    pos: new Vector3(x, y + 0.5, z),
-    vel: new Vector3(),
+    pos: v3(x, y + 0.5, z),
+    vel: v3(0, 0, 0),
     health: props.maxHealth,
     maxHealth: props.maxHealth,
     yaw: Math.random() * Math.PI * 2,
@@ -447,8 +355,8 @@ function spawnMob(type: MobType, x: number, y: number, z: number): Mob {
 
 function spawnMobsAroundPlayer(px: number, pz: number, daytime: number): void {
   const [pcx, pcz] = worldToChunk(px, pz);
-  const isDay = daytime > 0.25 && daytime < 0.75;
-  const maxMobs = 20; // More mobs for adventures mode
+  const isDay = daytime < 0.5;
+  const maxMobs = 20;
 
   if (mobs.size >= maxMobs) return;
 
@@ -461,21 +369,18 @@ function spawnMobsAroundPlayer(px: number, pz: number, daytime: number): void {
       const prng = mulberry32(seed);
       const roll = prng();
 
-      // Determine mob type based on time of day and biome
       let type: MobType;
       if (isDay) {
-        // Passive mobs spawn on grass in daylight
         if (roll < 0.25) type = 'cow';
         else if (roll < 0.45) type = 'pig';
         else if (roll < 0.65) type = 'sheep';
         else if (roll < 0.8) type = 'chicken';
         else if (roll < 0.85) type = 'rabbit';
-        else if (roll < 0.88) type = 'muddy_pig'; // Minecraft Earth exclusive
-        else if (roll < 0.91) type = 'dyed_cat'; // Minecraft Earth exclusive
-        else if (roll < 0.94) type = 'moobloom'; // Minecraft Earth exclusive
-        else continue; // skip this chunk
+        else if (roll < 0.88) type = 'muddy_pig';
+        else if (roll < 0.91) type = 'dyed_cat';
+        else if (roll < 0.94) type = 'moobloom';
+        else continue;
       } else {
-        // Adventures mode: more hostile mobs at night
         if (roll < 0.3) type = 'zombie';
         else if (roll < 0.55) type = 'skeleton';
         else if (roll < 0.75) type = 'creeper';
@@ -485,56 +390,47 @@ function spawnMobsAroundPlayer(px: number, pz: number, daytime: number): void {
         else type = 'stray';
       }
 
-      // Find ground level
       const wx = cx * W.CHUNK_W + Math.floor(prng() * W.CHUNK_D);
       const wz = cz * W.CHUNK_D + Math.floor(prng() * W.CHUNK_D);
       const groundY = getElevation(wx, wz);
 
-      // Don't spawn in water or too high
       const blockAtFeet = getBlock(wx, groundY, wz);
       if (blockAtFeet === BLOCK.WATER || blockAtFeet === BLOCK.LAVA) continue;
       if (groundY > W.SEA_LEVEL + 80) continue;
 
-      // Check distance from player
       const dist = Math.sqrt((wx - px) ** 2 + (wz - pz) ** 2);
-      if (dist < 24 || dist > 96) continue; // spawn between 24-96 blocks
+      if (dist < 24 || dist > 96) continue;
 
       spawnMob(type, wx, groundY, wz);
     }
   }
 }
 
-function updateMob(mob: Mob, dt: number, playerPos: Vector3, difficulty: string): void {
+function updateMob(mob: Mob, dt: number, playerPos: Vec3, difficulty: string): void {
   const props = MOB_PROPERTIES[mob.type];
   if (!props) return;
 
-  const distToPlayer = mob.pos.distanceTo(playerPos);
+  const distToPlayer = v3dist(mob.pos, playerPos);
 
-  // Difficulty multiplier: Hard = faster/more aggressive, Peaceful = no hostile
   const diffMult = difficulty === 'Hard' ? 1.3 : difficulty === 'Easy' ? 0.8 : 1.0;
   if (difficulty === 'Peaceful' && props.hostile) {
-    mob.health = 0; // despawn hostiles in peaceful
+    mob.health = 0;
     return;
   }
 
-  // AI behavior
   mob.aiTimer -= dt;
   if (mob.aiTimer <= 0) {
     mob.aiTimer = 1 + Math.random() * 4;
 
     if (props.hostile && distToPlayer < props.followRange) {
-      // Hostile: chase player if within follow range
       mob.aiState = 'chase';
     } else if (props.category === 'passive' && distToPlayer < 10) {
-      // Passive: flee from player if too close
       mob.aiState = 'flee';
     } else {
-      // Wander randomly
       mob.aiState = Math.random() < 0.7 ? 'wander' : 'idle';
     }
   }
 
-  // Apply AI state
   const speed = props.movementSpeed * diffMult;
   switch (mob.aiState) {
     case 'wander': {
@@ -545,7 +441,6 @@ function updateMob(mob: Mob, dt: number, playerPos: Vector3, difficulty: string)
       break;
     }
     case 'flee': {
-      // Run away from player
       const dx = mob.pos.x - playerPos.x;
       const dz = mob.pos.z - playerPos.z;
       mob.yaw = Math.atan2(-dx, -dz);
@@ -554,14 +449,12 @@ function updateMob(mob: Mob, dt: number, playerPos: Vector3, difficulty: string)
       break;
     }
     case 'chase': {
-      // Move toward player
       const dx = playerPos.x - mob.pos.x;
       const dz = playerPos.z - mob.pos.z;
       mob.yaw = Math.atan2(-dx, -dz);
       mob.vel.x = -Math.sin(mob.yaw) * speed;
       mob.vel.z = -Math.cos(mob.yaw) * speed;
 
-      // Attack if close enough
       if (distToPlayer < props.attackRange) {
         mob.aiState = 'attack';
         mob.aiTimer = 0.5;
@@ -569,10 +462,8 @@ function updateMob(mob: Mob, dt: number, playerPos: Vector3, difficulty: string)
       break;
     }
     case 'attack': {
-      // Deal damage to player
       if (distToPlayer < props.attackRange + 1) {
-        // Damage will be applied in the attack timer check
-        mob.aiTimer = 1.0; // attack cooldown
+        mob.aiTimer = 1.0;
         mob.aiState = 'chase';
       }
       break;
@@ -584,16 +475,13 @@ function updateMob(mob: Mob, dt: number, playerPos: Vector3, difficulty: string)
       break;
   }
 
-  // Apply gravity
   mob.vel.y += GRAVITY * dt;
   mob.vel.y = Math.max(mob.vel.y, -40);
 
-  // Move
   mob.pos.x += mob.vel.x * dt;
   mob.pos.z += mob.vel.z * dt;
   mob.pos.y += mob.vel.y * dt;
 
-  // Ground collision
   const groundY = getElevation(Math.floor(mob.pos.x), Math.floor(mob.pos.z));
   if (mob.pos.y <= groundY + 1) {
     mob.pos.y = groundY + 1;
@@ -603,286 +491,15 @@ function updateMob(mob: Mob, dt: number, playerPos: Vector3, difficulty: string)
     mob.onGround = false;
   }
 
-  // Despawn if too far
   if (distToPlayer > MOB_DESPAWN_DISTANCE) {
-    mob.health = 0; // mark for removal
+    mob.health = 0;
   }
 }
 
-function updateMobMeshes(scene: Scene, playerPos: Vector3): void {
-  // Remove meshes for dead/distant mobs
-  for (const [id, mesh] of mobMeshes) {
-    const mob = mobs.get(id);
-    if (!mob || mob.health <= 0 || mob.pos.distanceTo(playerPos) > 64) {
-      scene.remove(mesh);
-      if (mesh.geometry) (mesh.geometry as BoxGeometry).dispose();
-      if (mesh.material) (mesh.material as MeshStandardMaterial).dispose();
-      mobMeshes.delete(id);
-    }
-  }
-
-  // Add/update meshes for nearby mobs
-  for (const [id, mob] of mobs) {
-    if (mob.health <= 0) continue;
-    if (mob.pos.distanceTo(playerPos) > 48) continue;
-
-    let mesh = mobMeshes.get(id);
-    if (!mesh) {
-      const props = MOB_PROPERTIES[mob.type];
-      const w = props?.size.width ?? 0.6;
-      const h = props?.size.height ?? 1.8;
-      const geo = new BoxGeometry(w, h, w);
-      const color = getMobColor(mob.type);
-      const mat = new MeshLambertMaterial({ color });
-      mesh = new Mesh(geo, mat);
-      mesh.position.copy(mob.pos);
-      scene.add(mesh);
-      mobMeshes.set(id, mesh);
-    }
-
-    // Update position
-    mesh.position.copy(mob.pos);
-    mesh.rotation.y = mob.yaw;
-  }
-}
-
-// ─── Textures (local assets) ─────────────────────────────────────────────────
-const textureLoader = new TextureLoader();
-const textureCache = new Map<string, Texture>();
-const TEXTURE_SIZE = 16;
-const TEXTURE_BLOCK_DIR = '/textures/blocks/';
-
-function loadTexture(path: string): Texture {
-  const cached = textureCache.get(path);
-  if (cached) return cached;
-
-  const texture = textureLoader.load(
-    path,
-    undefined,
-    undefined,
-    () => {
-      console.warn(`Failed to load texture: ${path}`);
-      textureCache.delete(path);
-      const fallback = createSolidTexture(0xff00ff);
-      textureCache.set(path, fallback);
-    }
-  );
-  texture.magFilter = NearestFilter;
-  texture.minFilter = NearestFilter;
-  texture.colorSpace = SRGBColorSpace;
-  textureCache.set(path, texture);
-  return texture;
-}
-
-function getBlockTexture(id: number, face: 'all' | 'top' | 'bottom' | 'side' | 'front'): Texture {
-  const file = getTextureUrl(id, face);
-  if (!file) {
-    return createSolidTexture(0xff00ff);
-  }
-  return loadTexture(TEXTURE_BLOCK_DIR + file);
-}
-
-function createSolidTexture(color: number): Texture {
-  const canvas = document.createElement('canvas');
-  canvas.width = TEXTURE_SIZE;
-  canvas.height = TEXTURE_SIZE;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
-  ctx.fillRect(0, 0, TEXTURE_SIZE, TEXTURE_SIZE);
-  const texture = new CanvasTexture(canvas);
-  texture.magFilter = NearestFilter;
-  texture.minFilter = NearestFilter;
-  texture.colorSpace = SRGBColorSpace;
-  return texture;
-}
-
-// ─── Mesh Builder ─────────────────────────────────────────────────────────────
-let worldMeshes: InstancedMesh[] = [];
-
-function buildChunkMesh(scene: Scene, chunk: Chunk): void {
-  const baseX = chunk.cx * W.CHUNK_W;
-  const baseZ = chunk.cz * W.CHUNK_D;
-
-  const isExposed = (id: number, wx: number, wy: number, wz: number): boolean =>
-    id === BLOCK.WATER
-      ? getBlock(wx + 1, wy, wz) !== BLOCK.WATER || getBlock(wx - 1, wy, wz) !== BLOCK.WATER ||
-        getBlock(wx, wy + 1, wz) !== BLOCK.WATER || getBlock(wx, wy - 1, wz) !== BLOCK.WATER ||
-        getBlock(wx, wy, wz + 1) !== BLOCK.WATER || getBlock(wx, wy, wz - 1) !== BLOCK.WATER
-      : getBlock(wx + 1, wy, wz) === BLOCK.AIR || getBlock(wx - 1, wy, wz) === BLOCK.AIR ||
-        getBlock(wx, wy + 1, wz) === BLOCK.AIR || getBlock(wx, wy - 1, wz) === BLOCK.AIR ||
-        getBlock(wx, wy, wz + 1) === BLOCK.AIR || getBlock(wx, wy, wz - 1) === BLOCK.AIR;
-
-  const counts = new Map<number, number>();
-  for (let ly = 0; ly < W.CHUNK_H; ly++) {
-    for (let lz = 0; lz < W.CHUNK_D; lz++) {
-      for (let lx = 0; lx < W.CHUNK_W; lx++) {
-        const id = chunk.blocks[localIndex(lx, ly, lz)];
-        if (id === BLOCK.AIR) continue;
-        const wx = baseX + lx;
-        const wy = ly;
-        const wz = baseZ + lz;
-        if (!isExposed(id, wx, wy, wz)) continue;
-        counts.set(id, (counts.get(id) ?? 0) + 1);
-      }
-    }
-  }
-
-  const geo = new BoxGeometry(1, 1, 1);
-  const meshes = new Map<number, { mesh: InstancedMesh; count: number }>();
-  for (const [id, cnt] of counts) {
-    const mat = createBlockMaterial(id);
-    const im = new InstancedMesh(geo, mat, cnt);
-    if (id !== BLOCK.WATER) {
-      im.castShadow = true;
-      im.receiveShadow = true;
-    }
-    scene.add(im);
-    worldMeshes.push(im);
-    meshes.set(id, { mesh: im, count: 0 });
-  }
-
-  const dummy = new Object3D();
-  for (let ly = 0; ly < W.CHUNK_H; ly++) {
-    for (let lz = 0; lz < W.CHUNK_D; lz++) {
-      for (let lx = 0; lx < W.CHUNK_W; lx++) {
-        const id = chunk.blocks[localIndex(lx, ly, lz)];
-        if (id === BLOCK.AIR) continue;
-        const wx = baseX + lx;
-        const wy = ly;
-        const wz = baseZ + lz;
-        if (!isExposed(id, wx, wy, wz)) continue;
-        const e = meshes.get(id);
-        if (!e) continue;
-        dummy.position.set(wx, wy, wz);
-        dummy.updateMatrix();
-        e.mesh.setMatrixAt(e.count++, dummy.matrix);
-      }
-    }
-  }
-  for (const e of meshes.values()) e.mesh.instanceMatrix.needsUpdate = true;
-}
-
-function sideTopMat(id: number): [MeshLambertMaterial, MeshLambertMaterial] {
-  return [
-    new MeshLambertMaterial({ map: getBlockTexture(id, 'side') }),
-    new MeshLambertMaterial({ map: getBlockTexture(id, 'top') }),
-  ];
-}
-
-function sideTopBottomMat(id: number): [MeshLambertMaterial, MeshLambertMaterial, MeshLambertMaterial] {
-  return [
-    new MeshLambertMaterial({ map: getBlockTexture(id, 'side') }),
-    new MeshLambertMaterial({ map: getBlockTexture(id, 'top') }),
-    new MeshLambertMaterial({ map: getBlockTexture(id, 'bottom') }),
-  ];
-}
-
-// BoxGeometry face order: [+x, -x, +y, -y, +z, -z] = [right, left, top, bottom, front, back]
-const TOP_BOTTOM_LAYOUT = [0, 0, 1, 1, 0, 0] as const; // side,side,top,top,side,side
-const TOP_BTM_LAYOUT = [0, 0, 1, 2, 0, 0] as const; // side,side,top,bottom,side,side
-function buildMultiMat(sideTop: [MeshLambertMaterial, MeshLambertMaterial], layout: readonly number[]): MeshLambertMaterial[] {
-  return layout.map((i: number) => sideTop[i]);
-}
-
-function buildMultiMat3(mats: [MeshLambertMaterial, MeshLambertMaterial, MeshLambertMaterial], layout: readonly number[]): MeshLambertMaterial[] {
-  return layout.map((i: number) => mats[i]);
-}
-
-function createBlockMaterial(id: number): MeshLambertMaterial | MeshLambertMaterial[] {
-  switch (id) {
-    case BLOCK.GLASS:
-      return new MeshLambertMaterial({ map: getBlockTexture(BLOCK.GLASS, 'all'), transparent: true, opacity: 0.48 });
-    case BLOCK.WATER:
-      return new MeshLambertMaterial({ color: 0x3f76e4, transparent: true, opacity: 0.6, depthWrite: false });
-    case BLOCK.LAVA:
-      return new MeshLambertMaterial({ color: 0xcf4b0f, transparent: true, opacity: 0.8, emissive: 0xff4400, emissiveIntensity: 0.5 });
-
-    // Grass-like: top / side / bottom all different
-    case BLOCK.GRASS:
-    case BLOCK.MYCELIUM:
-    case BLOCK.PODZOL:
-    case BLOCK.CRIMSON_NYLIUM:
-    case BLOCK.WARPED_NYLIUM:
-      return buildMultiMat3(sideTopBottomMat(id), TOP_BTM_LAYOUT);
-
-    // Furnace-like: top / side / front — no visible bottom
-    case BLOCK.FURNACE:
-    case BLOCK.SMOKER:
-    case BLOCK.BLAST_FURNACE: {
-      const [side, top] = sideTopMat(id);
-      const front = new MeshLambertMaterial({ map: getBlockTexture(id, 'front') });
-      return [side, side, top, top, front, side];
-    }
-
-    // Crafting table: top / side distinct, bottom = side
-    case BLOCK.CRAFTING_TABLE: {
-      const [side, top] = sideTopMat(id);
-      return [side, side, top, side, side, side];
-    }
-
-    // Pillar/log blocks: top/bottom same, side different
-    case BLOCK.OAK_LOG:
-    case BLOCK.SPRUCE_LOG:
-    case BLOCK.BIRCH_LOG:
-    case BLOCK.JUNGLE_LOG:
-    case BLOCK.ACACIA_LOG:
-    case BLOCK.DARK_OAK_LOG:
-    case BLOCK.CHERRY_LOG:
-    case BLOCK.MANGROVE_LOG:
-    case BLOCK.BAMBOO_BLOCK:
-    case BLOCK.STRIPPED_CHERRY_LOG:
-    case BLOCK.CRIMSON_STEM:
-    case BLOCK.WARPED_STEM:
-    case BLOCK.ANCIENT_DEBRIS:
-    case BLOCK.BASALT:
-    case BLOCK.PURPUR_PILLAR:
-      return buildMultiMat(sideTopMat(id), TOP_BOTTOM_LAYOUT);
-
-    // Top/side blocks (bottom = top)
-    case BLOCK.TNT:
-    case BLOCK.PUMPKIN:
-    case BLOCK.MELON:
-    case BLOCK.CACTUS:
-    case BLOCK.SANDSTONE:
-    case BLOCK.RED_SANDSTONE:
-    case BLOCK.QUARTZ_BLOCK:
-    case BLOCK.HAY_BALE:
-    case BLOCK.BONE_BLOCK:
-      return buildMultiMat(sideTopMat(id), TOP_BOTTOM_LAYOUT);
-
-    // Blocks with distinct top and side but bottom = planks/dirt
-    case BLOCK.BOOKSHELF: {
-      const [side, top] = sideTopMat(id);
-      const planks = new MeshLambertMaterial({ map: getBlockTexture(BLOCK.BOOKSHELF, 'bottom') });
-      return [side, side, top, planks, side, side];
-    }
-
-    default:
-      return new MeshLambertMaterial({ map: getBlockTexture(id, 'all') });
-  }
-}
-
-export function rebuildWorldMesh(scene: Scene): void {
-  for (const mesh of worldMeshes) {
-    scene.remove(mesh);
-    mesh.geometry.dispose();
-    if (Array.isArray(mesh.material)) {
-      mesh.material.forEach((m) => m.dispose());
-    } else {
-      mesh.material.dispose();
-    }
-  }
-  worldMeshes = [];
-  for (const chunk of chunks.values()) {
-    buildChunkMesh(scene, chunk);
-    chunk.dirty = false;
-  }
-}
-
-// ─── Player ───────────────────────────────────────────────────────────────────
+// --- Player -----------------------------------------------------------------
 interface PlayerState {
-  pos: Vector3;
-  vel: Vector3;
+  pos: Vec3;
+  vel: Vec3;
   yaw: number;
   pitch: number;
   onGround: boolean;
@@ -890,6 +507,7 @@ interface PlayerState {
   isPointerLocked: boolean;
   health: number;
   hunger: number;
+  saturation: number;
   xp: number;
   xpLevel: number;
   oxygen: number;
@@ -903,12 +521,14 @@ interface PlayerState {
   flying: boolean;
   _lastSpacePress: number;
   _spaceWasDown: boolean;
+  _regenTimer: number;
+  _starvationTimer: number;
 }
 
 function initPlayer(): PlayerState {
   return {
-    pos: new Vector3(0, 100, 0),
-    vel: new Vector3(),
+    pos: v3(0, 100, 0),
+    vel: v3(0, 0, 0),
     yaw: 0,
     pitch: 0,
     onGround: false,
@@ -916,6 +536,7 @@ function initPlayer(): PlayerState {
     isPointerLocked: false,
     health: 20,
     hunger: 20,
+    saturation: 5,
     xp: 0,
     xpLevel: 0,
     oxygen: 300,
@@ -929,6 +550,8 @@ function initPlayer(): PlayerState {
     flying: false,
     _lastSpacePress: 0,
     _spaceWasDown: false,
+    _regenTimer: 0,
+    _starvationTimer: 0,
   };
 }
 
@@ -959,17 +582,19 @@ function updatePlayer(p: PlayerState, dt: number, difficulty: string = 'Normal')
   const waterMul = inWater ? 0.5 : 1;
   const spd = (isSprinting ? WALK_SPEED * 1.8 : WALK_SPEED) * waterMul;
   p.sprinting = isSprinting;
-  const fw = new Vector3(-Math.sin(p.yaw), 0, -Math.cos(p.yaw));
-  const rt = new Vector3(Math.cos(p.yaw), 0, -Math.sin(p.yaw));
-  const mv = new Vector3();
-  if (p.keys.has('KeyW') || p.keys.has('ArrowUp')) mv.add(fw);
-  if (p.keys.has('KeyS') || p.keys.has('ArrowDown')) mv.sub(fw);
-  if (p.keys.has('KeyA') || p.keys.has('ArrowLeft')) mv.sub(rt);
-  if (p.keys.has('KeyD') || p.keys.has('ArrowRight')) mv.add(rt);
-  p.moving = mv.length() > 0.01;
-  if (p.moving) mv.normalize().multiplyScalar(spd);
-  // Creative flight: double-tap space to toggle
-  const spaceDown = p.keys.has('Space') || p.keys.has('KeyE');
+  const fw = v3(-Math.sin(p.yaw), 0, -Math.cos(p.yaw));
+  const rt = v3(Math.cos(p.yaw), 0, -Math.sin(p.yaw));
+  const mv = v3(0, 0, 0);
+  if (p.keys.has('KeyW') || p.keys.has('ArrowUp')) { mv.x += fw.x; mv.y += fw.y; mv.z += fw.z; }
+  if (p.keys.has('KeyS') || p.keys.has('ArrowDown')) { mv.x -= fw.x; mv.y -= fw.y; mv.z -= fw.z; }
+  if (p.keys.has('KeyA') || p.keys.has('ArrowLeft')) { mv.x -= rt.x; mv.y -= rt.y; mv.z -= rt.z; }
+  if (p.keys.has('KeyD') || p.keys.has('ArrowRight')) { mv.x += rt.x; mv.y += rt.y; mv.z += rt.z; }
+  p.moving = v3len(mv) > 0.01;
+  if (p.moving) {
+    const len = v3len(mv);
+    if (len > 0) { mv.x = mv.x / len * spd; mv.y = mv.y / len * spd; mv.z = mv.z / len * spd; }
+  }
+  const spaceDown = p.keys.has('Space');
   const shiftDown = p.keys.has('ShiftLeft') || p.keys.has('ShiftRight');
   if (p.gameMode === 'creative') {
     if (spaceDown && !p._spaceWasDown) {
@@ -987,7 +612,21 @@ function updatePlayer(p: PlayerState, dt: number, difficulty: string = 'Normal')
     }
   }
   if (!(p.gameMode === 'creative' && p.flying)) {
-    if ((p.keys.has('Space') || p.keys.has('KeyE')) && p.onGround) { p.vel.y = (inWater ? JUMP_VEL * 0.6 : JUMP_VEL); p.onGround = false; }
+    if (p.keys.has('Space') && p.onGround) {
+      p.vel.y = (inWater ? JUMP_VEL * 0.6 : JUMP_VEL);
+      p.onGround = false;
+      if (p.gameMode === 'survival') {
+        const jumpCost = 0.05;
+        if (p.saturation >= jumpCost) {
+          p.saturation -= jumpCost;
+        } else {
+          const remaining = jumpCost - p.saturation;
+          p.saturation = 0;
+          p.hunger = Math.max(0, p.hunger - remaining);
+        }
+        p.saturation = Math.min(p.saturation, p.hunger);
+      }
+    }
     p.vel.y += GRAVITY * dt;
     p.vel.y = Math.max(p.vel.y, -40);
   }
@@ -1004,7 +643,6 @@ function updatePlayer(p: PlayerState, dt: number, difficulty: string = 'Normal')
   } else {
     p.onGround = false;
   }
-  // Creative mode: no fall damage
   if (p.gameMode === 'creative') {
     p.fallDistance = 0;
   }
@@ -1024,50 +662,53 @@ function updatePlayer(p: PlayerState, dt: number, difficulty: string = 'Normal')
   if (inWater) {
     p.fallDistance = 0;
   }
-  // Hunger depletion: sprinting costs hunger (survival only)
-  if (p.sprinting && p.moving && p.gameMode === 'survival') {
-    p.hunger = Math.max(0, p.hunger - dt * 0.4);
-  }
-  
-  // Difficulty-based health regeneration
-  if (difficulty === 'Peaceful') {
-    // Peaceful: fast regeneration
-    if (p.health < 20) {
-      p.health = Math.min(20, p.health + dt * 1.0);
+  if (p.gameMode === 'survival') {
+    const passiveDepletion = dt * 1.0;
+    const sprintDepletion = (p.sprinting && p.moving) ? dt * 0.5 : 0;
+    const totalDepletion = passiveDepletion + sprintDepletion;
+    if (p.saturation >= totalDepletion) {
+      p.saturation -= totalDepletion;
+    } else {
+      const remaining = totalDepletion - p.saturation;
+      p.saturation = 0;
+      p.hunger = Math.max(0, p.hunger - remaining);
     }
-  } else if (difficulty === 'Easy') {
-    // Easy: slow regeneration when hunger >= 18
-    if (p.hunger >= 18 && p.health < 20) {
-      p.health = Math.min(20, p.health + dt * 0.25);
-    }
-  } else if (difficulty === 'Normal') {
-    // Normal: standard regeneration when hunger >= 18
-    if (p.hunger >= 18 && p.health < 20) {
-      p.health = Math.min(20, p.health + dt * 0.5);
-    }
-  } else if (difficulty === 'Hard') {
-    // Hard: no natural regeneration
+    p.saturation = Math.min(p.saturation, p.hunger);
   }
-  
-  // Starvation damage when hunger == 0
-  if (p.hunger <= 0) {
-    // Difficulty affects starvation damage
-    const starvationDamage = difficulty === 'Hard' ? 2.0 : difficulty === 'Normal' ? 1.0 : 0.5;
-    p.health = Math.max(0, p.health - dt * starvationDamage);
+
+  if (p.gameMode === 'survival' && p.health > 0 && p.health < 20) {
+    if (p.hunger >= 18) {
+      p._regenTimer += dt;
+      while (p._regenTimer >= 4.0 && p.health < 20 && p.hunger >= 18) {
+        p.health = Math.min(20, p.health + 1);
+        p.hunger = Math.max(0, p.hunger - 1);
+        p._regenTimer -= 4.0;
+      }
+    }
   }
-  if (p.pos.y < -10) { p.pos.y = 100; p.vel.set(0, 0, 0); }
-  // Water flow push — getFlowDirection pushes player along current
+
+  if (difficulty === 'Peaceful' && p.health < 20 && p.health > 0) {
+    p.health = Math.min(20, p.health + dt * 1.0);
+  }
+
+  if (p.gameMode === 'survival' && p.hunger <= 0) {
+    p._starvationTimer += dt;
+    while (p._starvationTimer >= 1.0 && p.health > 0) {
+      p.health = Math.max(0, p.health - 0.5);
+      p._starvationTimer -= 1.0;
+    }
+  }
+  if (p.pos.y < -10) { p.pos.y = 100; v3set(p.vel, 0, 0, 0); }
   const feetBlock = getBlock(Math.floor(p.pos.x), Math.floor(p.pos.y - HEAD_H + 0.5), Math.floor(p.pos.z));
   if (feetBlock === BLOCK.WATER) {
     const flow = getFlowDirection(getBlock, Math.floor(p.pos.x), Math.floor(p.pos.y - HEAD_H + 0.5), Math.floor(p.pos.z));
     if (flow) {
       p.vel.x += flow.dx * dt * 5;
       p.vel.z += flow.dz * dt * 5;
-      if (flow.dy < 0) p.vel.y -= dt * 10; // sink in falling water
+      if (flow.dy < 0) p.vel.y -= dt * 10;
     }
   }
-  
-  // Oxygen system: 300 = 15 seconds at 20 ticks/sec
+
   if (p.gameMode === 'creative') {
     p.oxygen = 300;
   } else if (inWater) {
@@ -1075,21 +716,20 @@ function updatePlayer(p: PlayerState, dt: number, difficulty: string = 'Normal')
     if (p.oxygen <= 0) {
       p.oxygen = 0;
       if (difficulty !== 'Peaceful') {
-        p.health = Math.max(0, p.health - dt * 1.0); // 1 HP/sec drowning
+        p.health = Math.max(0, p.health - dt * 1.0);
       }
     }
   } else {
     p.oxygen = Math.min(300, p.oxygen + dt * 20);
   }
-  
-  // Check for death
+
   if (p.health <= 0 && !p.isDead) {
     p.isDead = true;
     window.showDeathScreen?.();
   }
 }
 
-// ─── Sound Effects ────────────────────────────────────────────────────────────
+// --- Sound Effects -----------------------------------------------------------
 class SoundEffects {
   private ctx: AudioContext | null = null;
 
@@ -1118,7 +758,7 @@ class SoundEffects {
 
 const sounds = new SoundEffects();
 
-// ─── Mining System ───────────────────────────────────────────────────────────
+// --- Mining System -----------------------------------------------------------
 interface MiningState {
   targetX: number;
   targetY: number;
@@ -1127,6 +767,68 @@ interface MiningState {
   total: number;
   blockId: number;
   active: boolean;
+}
+
+interface BlockHit {
+  x: number;
+  y: number;
+  z: number;
+  normal: Vec3;
+  blockId: number;
+}
+
+function rayMarch(origin: Vec3, yaw: number, pitch: number, maxDist: number): BlockHit | null {
+  const dir = v3(
+    -Math.sin(yaw) * Math.cos(pitch),
+    -Math.sin(pitch),
+    -Math.cos(yaw) * Math.cos(pitch),
+  );
+
+  let x = origin.x;
+  let y = origin.y;
+  let z = origin.z;
+
+  const stepX = dir.x >= 0 ? 1 : -1;
+  const stepY = dir.y >= 0 ? 1 : -1;
+  const stepZ = dir.z >= 0 ? 1 : -1;
+
+  const tDeltaX = dir.x !== 0 ? Math.abs(1 / dir.x) : Infinity;
+  const tDeltaY = dir.y !== 0 ? Math.abs(1 / dir.y) : Infinity;
+  const tDeltaZ = dir.z !== 0 ? Math.abs(1 / dir.z) : Infinity;
+
+  let mapX = Math.floor(x);
+  let mapY = Math.floor(y);
+  let mapZ = Math.floor(z);
+
+  let tMaxX = dir.x !== 0 ? ((dir.x > 0 ? (mapX + 1 - x) : (x - mapX)) / dir.x) : Infinity;
+  let tMaxY = dir.y !== 0 ? ((dir.y > 0 ? (mapY + 1 - y) : (y - mapY)) / dir.y) : Infinity;
+  let tMaxZ = dir.z !== 0 ? ((dir.z > 0 ? (mapZ + 1 - z) : (z - mapZ)) / dir.z) : Infinity;
+
+  for (let i = 0; i < maxDist * 4; i++) {
+    let normal: Vec3;
+    if (tMaxX < tMaxY && tMaxX < tMaxZ) {
+      if (tMaxX > maxDist) return null;
+      mapX += stepX;
+      tMaxX += tDeltaX;
+      normal = v3(-stepX, 0, 0);
+    } else if (tMaxY < tMaxZ) {
+      if (tMaxY > maxDist) return null;
+      mapY += stepY;
+      tMaxY += tDeltaY;
+      normal = v3(0, -stepY, 0);
+    } else {
+      if (tMaxZ > maxDist) return null;
+      mapZ += stepZ;
+      tMaxZ += tDeltaZ;
+      normal = v3(0, 0, -stepZ);
+    }
+
+    const blockId = getBlock(mapX, mapY, mapZ);
+    if (blockId !== BLOCK.AIR) {
+      return { x: mapX, y: mapY, z: mapZ, normal, blockId };
+    }
+  }
+  return null;
 }
 
 function getHeldToolType(selectedBlock: number): { toolType: ToolType; toolTier: number; toolId: number } {
@@ -1229,31 +931,123 @@ function getBlockDrops(blockId: number): number[] {
   return drops[blockId] ?? [blockId];
 }
 
-// ─── createScene ──────────────────────────────────────────────────────────────
+// --- WebGL 3D Renderer + Canvas 2D HUD ------------------------------------
+
+function isSolid(id: number): boolean {
+  return id !== BLOCK.AIR && id !== BLOCK.WATER;
+}
+
+
+function renderFrameWebGL(canvas: HTMLCanvasElement, player: PlayerState): void {
+  if (!renderer) return;
+  const gl = renderer.gl;
+  const W = canvas.width, H = canvas.height;
+  if (W === 0 || H === 0) return;
+
+  const skyCol = interpolateSkyColor(player.daytime);
+  const skyR = ((skyCol >> 16) & 0xff) / 255;
+  const skyG = ((skyCol >> 8) & 0xff) / 255;
+  const skyB = (skyCol & 0xff) / 255;
+  gl.clearColor(skyR, skyG, skyB, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  const proj = createPerspective(1.2, W / H, 0.1, 512);
+  const eyeX = player.pos.x;
+  const eyeY = player.pos.y + 1.6;
+  const eyeZ = player.pos.z;
+  const yaw = player.yaw;
+  const pitch = player.pitch;
+  const cx = eyeX + Math.sin(yaw) * Math.cos(pitch);
+  const cy = eyeY + Math.sin(pitch);
+  const cz = eyeZ + Math.cos(yaw) * Math.cos(pitch);
+  const view = lookAt(eyeX, eyeY, eyeZ, cx, cy, cz, 0, 1, 0);
+  const mvp = mulMat4(proj, view);
+
+  for (const [, chunk] of chunks) {
+    if (chunk.mesh) renderChunkMesh(renderer, chunk.mesh, mvp);
+  }
+}
+
+function renderHUD(c: CanvasRenderingContext2D, W: number, H: number, player: PlayerState, _targetHit: BlockHit | null): void {
+  c.clearRect(0, 0, W, H);
+  const pBX = Math.floor(player.pos.x);
+  const pBY = Math.floor(player.pos.y);
+  const pBZ = Math.floor(player.pos.z);
+
+  // Crosshair
+  c.strokeStyle = '#ffffff';
+  c.lineWidth = 2;
+  c.beginPath();
+  c.moveTo(W / 2 - 8, H / 2);
+  c.lineTo(W / 2 + 8, H / 2);
+  c.moveTo(W / 2, H / 2 - 8);
+  c.lineTo(W / 2, H / 2 + 8);
+  c.stroke();
+  c.lineWidth = 1;
+
+  // Coordinates
+  c.fillStyle = '#ffffff';
+  c.font = '14px monospace';
+  c.fillText('X:' + pBX + ' Y:' + pBY + ' Z:' + pBZ, 10, 20);
+
+  // Health hearts
+  c.fillStyle = '#df3d37';
+  c.font = '18px monospace';
+  const hearts = Math.ceil(Math.max(0, player.health) / 2);
+  c.fillText('\u2665'.repeat(hearts), 10, 42);
+  c.font = '14px monospace';
+
+  // Time + Chunks
+  const timeOfDay = player.daytime < 0.1 ? 'Dawn' : player.daytime < 0.4 ? 'Day' : player.daytime < 0.6 ? 'Dusk' : player.daytime < 0.9 ? 'Night' : 'Dawn';
+  c.fillStyle = '#ffffff';
+  c.fillText('Chunks: ' + chunks.size + ' | ' + timeOfDay, 10, 62);
+
+  // Oxygen
+  if (player.oxygen < 300) {
+    c.fillStyle = '#55ccff';
+    c.fillText('Oxygen: ' + Math.ceil(player.oxygen / 30) + '/10', 10, 82);
+  }
+
+  // Hunger
+  c.fillStyle = '#bf6b32';
+  c.fillText('Hunger: ' + Math.ceil(player.hunger), 10, 102);
+
+  // XP
+  c.fillStyle = '#aaaaaa';
+  c.fillText('XP: ' + player.xpLevel + ' (' + Math.floor(player.xp) + ')', 10, 122);
+}
+
+// Rebuild meshes when chunks are modified
+
+// --- createScene -------------------------------------------------------------
 export function createScene(canvas: HTMLCanvasElement): () => void {
-  const renderer = new WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(window.innerWidth, window.innerHeight, false);
-  renderer.shadowMap.enabled = true;
+  renderer = initRenderer(canvas);
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  if (renderer) resizeRenderer(renderer, canvas.width, canvas.height);
 
-  const scene = new Scene();
-  scene.background = new Color(0x87ceeb);
-  scene.fog = new Fog(0x87ceeb, 60, 120);
-
-  const camera = new PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 200);
-
-  // Sky color
-  scene.background = new Color(0x87ceeb);
-  scene.fog = new Fog(0x87ceeb, 60, 120);
-
-  // Lighting
-  scene.add(new HemisphereLight(0x87ceeb, 0x8b6842, 0.6));
-  const sun = new DirectionalLight(0xffeedd, 1.4);
-  sun.position.set(200, 400, 200);
-  sun.castShadow = true;
-  sun.shadow.mapSize.width = 2048;
-  sun.shadow.mapSize.height = 2048;
-  scene.add(sun);
+  overlayCanvas = document.createElement('canvas');
+  overlayCanvas.id = 'hud';
+  overlayCanvas.style.position = 'absolute';
+  overlayCanvas.style.top = '0';
+  overlayCanvas.style.left = '0';
+  overlayCanvas.style.pointerEvents = 'none';
+  overlayCanvas.style.zIndex = '10';
+  overlayCanvas.width = canvas.width;
+  overlayCanvas.height = canvas.height;
+  canvas.parentElement?.appendChild(overlayCanvas);
+  overlayCtx = overlayCanvas.getContext('2d');
+  function resizeOverlay() {
+    if (!overlayCanvas || !overlayCtx) return;
+    overlayCanvas.width = window.innerWidth;
+    overlayCanvas.height = window.innerHeight;
+  }
+  window.addEventListener('resize', () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    if (renderer) resizeRenderer(renderer, canvas.width, canvas.height);
+    resizeOverlay();
+  });
 
   // Settings state
   let difficulty = 'Normal';
@@ -1267,38 +1061,27 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
       getOrCreateChunk(playerChunkX + dx, playerChunkZ + dz);
     }
   }
-  rebuildWorldMesh(scene);
 
   // Place real-world landmarks at GPS coordinates
-  placeAllLandmarks(scene);
+  placeAllLandmarks();
+
+  // Build initial WebGL chunk meshes
+  rebuildWorldMesh();
 
   // Find ground level for spawn
   const spawnY = getElevation(0, 0) + 2;
 
   const player = initPlayer();
-  player.pos.set(0, spawnY, 0);
+  v3set(player.pos, 0, spawnY, 0);
 
-  const handPivot = new Group();
-  handPivot.position.set(0.52, -0.46, -0.78);
-  const sleeve = new MeshLambertMaterial({ color: 0x3b8291 });
-  const skin = new MeshLambertMaterial({ color: 0xba7c52 });
-  const hand = new Mesh(new BoxGeometry(0.25, 0.58, 0.25), [sleeve, sleeve, skin, sleeve, sleeve, sleeve]);
-  hand.rotation.x = -0.5;
-  const heldBlock = new Mesh(new BoxGeometry(0.22, 0.22, 0.22), createBlockMaterial(BLOCK.STONE));
-  heldBlock.position.set(-0.03, 0.28, -0.12);
-  handPivot.add(hand, heldBlock);
-  camera.add(handPivot);
-  scene.add(camera);
-  let handSwing = 0;
   let attackCooldown = 0;
   const mining: MiningState = { targetX: 0, targetY: 0, targetZ: 0, progress: 0, total: 0, blockId: 0, active: false };
-  let miningOverlay: Mesh | null = null;
   let fluidTickCounter = 0;
 
   // Eating state
   let isEating = false;
   let eatingProgress = 0;
-  const EATING_DURATION = 1.6; // seconds
+  const EATING_DURATION = 1.6;
   let eatingItem: number | null = null;
 
   // Inventory
@@ -1308,13 +1091,13 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
   };
   const renderInventorySlots = () => {
     for (let i = 0; i < 27; i++) {
-      const slotEl = document.querySelector(`[data-slot="storage-${i}"]`) as HTMLElement | null;
+      const slotEl = document.querySelector('[data-slot="storage-' + i + '"]') as HTMLElement | null;
       if (!slotEl) continue;
       const item = inventory.getSlot(SLOT.MAIN_START + i);
       renderSlotItem(slotEl, item);
     }
     for (let i = 0; i < 9; i++) {
-      const slotEl = document.querySelector(`[data-slot="hotbar-${i}"]`) as HTMLElement | null;
+      const slotEl = document.querySelector('[data-slot="hotbar-' + i + '"]') as HTMLElement | null;
       if (!slotEl) continue;
       const item = inventory.getSlot(SLOT.HOTBAR_START + i);
       renderSlotItem(slotEl, item);
@@ -1327,7 +1110,7 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
     if (file) {
       const img = document.createElement('div');
       img.className = 'slot-item';
-      img.style.backgroundImage = `url(/textures/items/${file})`;
+      img.style.backgroundImage = 'url(/textures/items/' + file + ')';
       el.appendChild(img);
     }
     if (item.count > 1) {
@@ -1356,7 +1139,7 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
         if (url) {
           const img = document.createElement('div');
           img.className = 'slot-item';
-          img.style.backgroundImage = `url(${url})`;
+          img.style.backgroundImage = 'url(' + url + ')';
           outEl.appendChild(img);
         }
         if (craftingOutput.count > 1) {
@@ -1375,14 +1158,6 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
   let furnaceOutput: { itemId: number; count: number } | null = null;
   let furnaceProgress = 0;
 
-  // Block highlight
-  const highlightGeo = new BoxGeometry(1.02, 1.02, 1.02);
-  const edges = new EdgesGeometry(highlightGeo);
-  const highlightMat = new LineBasicMaterial({ color: 0xffffff, linewidth: 2 });
-  const blockHighlight = new LineSegments(edges, highlightMat);
-  blockHighlight.visible = false;
-  scene.add(blockHighlight);
-
   const hudEl = document.getElementById('game-hud');
   const crossEl = document.getElementById('crosshair');
 
@@ -1399,14 +1174,14 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
 
   const initHotbarIcons = () => {
     for (let i = 0; i < 9; i++) {
-      const slotEl = document.getElementById(`slot-${i}`);
+      const slotEl = document.getElementById('slot-' + i);
       if (!slotEl) continue;
       const preview = slotEl.querySelector('.block-preview') as HTMLElement | null;
       if (!preview) continue;
       const blockId = HOTBAR_BLOCKS[i];
       const url = getTextureUrl(blockId, 'all');
       if (url) {
-        preview.style.backgroundImage = `url(${url})`;
+        preview.style.backgroundImage = 'url(' + url + ')';
         preview.style.backgroundSize = 'contain';
         preview.style.backgroundRepeat = 'no-repeat';
         preview.style.backgroundPosition = 'center';
@@ -1418,7 +1193,7 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
   const updateHotbarUI = () => {
     const idx = HOTBAR_BLOCKS.indexOf(player.selectedBlock);
     for (let i = 0; i < 9; i++) {
-      const slotEl = document.getElementById(`slot-${i}`);
+      const slotEl = document.getElementById('slot-' + i);
       if (slotEl) {
         slotEl.classList.toggle('active', i === idx);
       }
@@ -1428,7 +1203,6 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
   const onSelectSlot = (e: Event) => {
     const customEvent = e as CustomEvent<{ index: number }>;
     player.selectedBlock = HOTBAR_BLOCKS[customEvent.detail.index];
-    heldBlock.material = createBlockMaterial(player.selectedBlock);
     updateHotbarUI();
   };
   window.addEventListener('select-slot', onSelectSlot);
@@ -1437,171 +1211,152 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
   const onMouseDown = (e: MouseEvent) => {
     if (!player.isPointerLocked) return;
 
-    const raycaster = new Raycaster();
-    raycaster.far = 6;
-    raycaster.setFromCamera(new Vector2(0, 0), camera);
-    handSwing = 1;
+    const eyePos = v3(player.pos.x, player.pos.y, player.pos.z);
+    const hit = rayMarch(eyePos, player.yaw, player.pitch, 6);
 
-    const intersects = raycaster.intersectObjects(worldMeshes);
-
-    // Check for mob interaction first
-    const mobMeshArr = Array.from(mobMeshes.values());
-    const mobIntersects = raycaster.intersectObjects(mobMeshArr);
-    if (mobIntersects.length > 0 && e.button === 0) {
-      const mobObj = mobIntersects[0].object as Mesh;
-      const mobId = Array.from(mobMeshes.entries()).find(([_, m]) => m === mobObj)?.[0];
-      if (mobId) {
-        const mob = mobs.get(mobId);
-        if (mob && mob.health > 0) {
-          // Determine damage based on held item
-          let damage = 1; // bare hand
-          const heldItem = inventory.getSlot(SLOT.HOTBAR_START + inventory.selectedHotbar);
-          if (heldItem) {
-            const props = getItemProperties(heldItem.itemId);
-            if (props?.category === 'weapon') {
-              damage = props.damage ?? 4;
-            } else if (props?.category === 'tool') {
-              damage = 2; // tools do 2 damage
-            }
-          }
-          mob.health -= damage;
-          sounds.playTone(150, 'square', 0.1);
-          handSwing = 1;
-          // Knockback
-          const dx = mob.pos.x - player.pos.x;
-          const dz = mob.pos.z - player.pos.z;
-          const dist = Math.sqrt(dx * dx + dz * dz);
-          if (dist > 0) {
-            mob.pos.x += (dx / dist) * 0.5;
-            mob.pos.z += (dz / dist) * 0.5;
-          }
-          // Check for death
-          if (mob.health <= 0) {
-            const props = MOB_PROPERTIES[mob.type];
-            if (props) {
-              for (const drop of props.drops) {
-                if (Math.random() <= drop.chance) {
-                  const count = drop.count || 1;
-                  for (let i = 0; i < count; i++) {
-                    addDropToInventory(drop.id);
-                  }
-                }
-              }
-              player.xp += props.experience;
-              if (player.xp >= player.xpLevel * 10 + 10) {
-                player.xp = 0;
-                player.xpLevel++;
-              }
-              showNotification(`Killed ${props.displayName} (+${props.experience} XP)`);
-            }
-          }
-          return;
-        }
+    // Check for mob interaction (simple proximity along look direction)
+    const lookDir = v3(
+      -Math.sin(player.yaw) * Math.cos(player.pitch),
+      -Math.sin(player.pitch),
+      -Math.cos(player.yaw) * Math.cos(player.pitch),
+    );
+    let closestMob: Mob | null = null;
+    let closestMobDist = Infinity;
+    for (const [, mob] of mobs) {
+      if (mob.health <= 0) continue;
+      const toMob = v3sub(mob.pos, eyePos);
+      const t = v3dot(toMob, lookDir);
+      if (t < 0 || t > 4) continue;
+      const perpDist = v3len(v3sub(toMob, v3scale(lookDir, t)));
+      if (perpDist < 1.5 && t < closestMobDist) {
+        closestMob = mob;
+        closestMobDist = t;
       }
     }
 
-    // Check for tappable interaction first
-    const tappableIntersects = raycaster.intersectObjects(Array.from(tappableMeshes.values()));
-    if (tappableIntersects.length > 0) {
-      const tappableObj = tappableIntersects[0].object as Mesh;
-      const tappableId = tappableObj.userData?.tappableId;
-      if (tappableId && e.button === 0) {
-        const drops = collectTappable(tappableId);
-        if (drops.length > 0) {
-          let totalXp = 0;
-           for (const drop of drops) {
-             const name = getItemProperties(drop.itemId)?.displayName ?? `Item ${drop.itemId}`;
-             showNotification(`Collected: ${drop.count}x ${name}`);
-             totalXp += drop.count;
-             // Add to inventory
-             inventory.addItem(drop.itemId, drop.count);
-           }
-          sounds.playTone(400, 'sine', 0.15);
-          // Remove tappable mesh
-          scene.remove(tappableObj);
-          (tappableObj.geometry as BoxGeometry).dispose();
-          (tappableObj.material as MeshStandardMaterial).dispose();
-          tappableMeshes.delete(tappableId);
-          // XP gain
-          player.xp += totalXp;
+    // Check for tappable interaction
+    let closestTappable: Tappable | null = null;
+    let closestTappableDist = Infinity;
+    for (const [, t] of tappables) {
+      if (!isTappableActive(t, performance.now())) continue;
+      const toTap = v3sub(v3(t.x, t.y + 0.5, t.z), eyePos);
+      const tapT = v3dot(toTap, lookDir);
+      if (tapT < 0 || tapT > 4) continue;
+      const perpDist = v3len(v3sub(toTap, v3scale(lookDir, tapT)));
+      if (perpDist < 1.0 && tapT < closestTappableDist) {
+        closestTappable = t;
+        closestTappableDist = tapT;
+      }
+    }
+
+    // Mob interaction
+    if (closestMob && e.button === 0 && (!hit || closestMobDist < v3dist(eyePos, v3(hit.x, hit.y, hit.z)))) {
+      const mob = closestMob;
+      let damage = 1;
+      const heldItem = inventory.getSlot(SLOT.HOTBAR_START + inventory.selectedHotbar);
+      if (heldItem) {
+        const props = getItemProperties(heldItem.itemId);
+        if (props?.category === 'weapon') {
+          damage = props.damage ?? 4;
+        } else if (props?.category === 'tool') {
+          damage = 2;
+        }
+      }
+      mob.health -= damage;
+      sounds.playTone(150, 'square', 0.1);
+      const dx = mob.pos.x - player.pos.x;
+      const dz = mob.pos.z - player.pos.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist > 0) {
+        mob.pos.x += (dx / dist) * 0.5;
+        mob.pos.z += (dz / dist) * 0.5;
+      }
+      if (mob.health <= 0) {
+        const props = MOB_PROPERTIES[mob.type];
+        if (props) {
+          for (const drop of props.drops) {
+            if (Math.random() <= drop.chance) {
+              const count = drop.count || 1;
+              for (let i = 0; i < count; i++) {
+                addDropToInventory(drop.id);
+              }
+            }
+          }
+          player.xp += props.experience;
           if (player.xp >= player.xpLevel * 10 + 10) {
             player.xp = 0;
             player.xpLevel++;
           }
+          showNotification('Killed ' + props.displayName + ' (+' + props.experience + ' XP)');
         }
-        return;
       }
+      return;
     }
 
-    if (intersects.length > 0) {
-      const intersect = intersects[0];
-      if (intersect.instanceId === undefined) return;
+    // Tappable interaction
+    if (closestTappable && e.button === 0 && (!hit || closestTappableDist < v3dist(eyePos, v3(hit.x, hit.y, hit.z)))) {
+      const drops = collectTappable(closestTappable.id);
+      if (drops.length > 0) {
+        let totalXp = 0;
+        for (const drop of drops) {
+          const name = getItemProperties(drop.itemId)?.displayName ?? 'Item ' + drop.itemId;
+          showNotification('Collected: ' + drop.count + 'x ' + name);
+          totalXp += drop.count;
+          inventory.addItem(drop.itemId, drop.count);
+        }
+        sounds.playTone(400, 'sine', 0.15);
+        player.xp += totalXp;
+        if (player.xp >= player.xpLevel * 10 + 10) {
+          player.xp = 0;
+          player.xpLevel++;
+        }
+      }
+      return;
+    }
 
-      const matrix = new Matrix4();
-      (intersect.object as InstancedMesh).getMatrixAt(intersect.instanceId, matrix);
-      const clickedBlockPos = new Vector3();
-      clickedBlockPos.setFromMatrixPosition(matrix);
+    // Block interaction
+    if (hit && hit.blockId !== BLOCK.AIR) {
+      const bx = hit.x, by = hit.y, bz = hit.z;
 
-      const bx = Math.round(clickedBlockPos.x);
-      const by = Math.round(clickedBlockPos.y);
-      const bz = Math.round(clickedBlockPos.z);
-
-        if (e.button === 0) {
-          const blockId = getBlock(bx, by, bz);
-          if (blockId !== BLOCK.AIR && blockId !== BLOCK.BEDROCK) {
-            // Creative mode: instant block break
-            if (player.gameMode === 'creative') {
-              breakBlock(bx, by, bz, blockId, scene);
-              return;
-            }
-            const props = getBlockProperties(blockId);
-            if (props.hardness < 0) return;
-            const { toolType, toolTier, toolId } = getHeldToolType(player.selectedBlock);
-            const harvestTime = getHarvestTime(blockId, toolId, toolType, toolTier);
-            if (mining.active && mining.targetX === bx && mining.targetY === by && mining.targetZ === bz) {
-              mining.progress += 1 / 60;
-              if (mining.progress >= mining.total) {
-                breakBlock(bx, by, bz, blockId, scene);
-                mining.active = false;
-                mining.progress = 0;
-              }
-            } else {
-              mining.targetX = bx;
-              mining.targetY = by;
-              mining.targetZ = bz;
-              mining.blockId = blockId;
+      if (e.button === 0) {
+        const blockId = getBlock(bx, by, bz);
+        if (blockId !== BLOCK.AIR && blockId !== BLOCK.BEDROCK) {
+          if (player.gameMode === 'creative') {
+            breakBlock(bx, by, bz, blockId);
+            return;
+          }
+          const props = getBlockProperties(blockId);
+          if (props.hardness < 0) return;
+          const { toolType, toolTier, toolId } = getHeldToolType(player.selectedBlock);
+          const harvestTime = getHarvestTime(blockId, toolId, toolType, toolTier);
+          if (mining.active && mining.targetX === bx && mining.targetY === by && mining.targetZ === bz) {
+            mining.progress += 1 / 60;
+            if (mining.progress >= mining.total) {
+              breakBlock(bx, by, bz, blockId);
+              mining.active = false;
               mining.progress = 0;
-              mining.total = harvestTime;
-              mining.active = true;
-              // Warn if using wrong tool
-              if (props.requiredTool !== 'none' && props.requiredTool !== toolType) {
-                showNotification(`Need ${props.requiredTool} to mine this faster`);
-              }
-              if (!miningOverlay) {
-                const geo = new BoxGeometry(1.005, 1.005, 1.005);
-                const mat = new MeshStandardMaterial({ 
-                  color: 0x000000, 
-                  transparent: true, 
-                  opacity: 0, 
-                  depthTest: true,
-                  wireframe: false,
-                });
-                miningOverlay = new Mesh(geo, mat);
-                scene.add(miningOverlay);
-              }
-              miningOverlay.visible = true;
+            }
+          } else {
+            mining.targetX = bx;
+            mining.targetY = by;
+            mining.targetZ = bz;
+            mining.blockId = blockId;
+            mining.progress = 0;
+            mining.total = harvestTime;
+            mining.active = true;
+            if (props.requiredTool !== 'none' && props.requiredTool !== toolType) {
+              showNotification('Need ' + props.requiredTool + ' to mine this faster');
             }
           }
+        }
       } else if (e.button === 2) {
         const blockId = getBlock(bx, by, bz);
 
-        // Bucket collection: collect water with empty bucket
         const collItem = inventory.getSlot(SLOT.HOTBAR_START + inventory.selectedHotbar);
         if (collItem && collItem.itemId === ITEM.BUCKET && blockId === BLOCK.WATER) {
           setBlock(bx, by, bz, BLOCK.AIR);
           collItem.itemId = ITEM.WATER_BUCKET;
           sounds.playTone(300, 'square', 0.1);
-          rebuildWorldMesh(scene);
           renderInventorySlots();
           return;
         }
@@ -1615,7 +1370,6 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
           return;
         }
 
-        // Check if held item is food - start eating
         const foodHeldItem = inventory.getSlot(SLOT.HOTBAR_START + inventory.selectedHotbar);
         if (foodHeldItem && foodHeldItem.count > 0) {
           const foodProps = getItemProperties(foodHeldItem.itemId);
@@ -1624,18 +1378,16 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
               isEating = true;
               eatingProgress = 0;
               eatingItem = foodHeldItem.itemId;
-              showNotification(`Eating ${foodProps.displayName}...`);
+              showNotification('Eating ' + foodProps.displayName + '...');
               return;
             }
           }
         }
 
-        if (!intersect.face) return;
-        const normal = intersect.face.normal.clone();
-        const newPos = clickedBlockPos.clone().add(normal);
-        const nx = Math.round(newPos.x);
-        const ny = Math.round(newPos.y);
-        const nz = Math.round(newPos.z);
+        const normal = hit.normal;
+        const nx = bx + normal.x;
+        const ny = by + normal.y;
+        const nz = bz + normal.z;
 
         if (getBlock(nx, ny, nz) !== BLOCK.AIR) return;
 
@@ -1644,25 +1396,20 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
         const overlapZ = (player.pos.z - PW < nz + 0.5) && (player.pos.z + PW > nz - 0.5);
         if (overlapX && overlapY && overlapZ) return;
 
-        // Consume item from inventory
         const blockHeldItem = inventory.getSlot(SLOT.HOTBAR_START + inventory.selectedHotbar);
         if (!blockHeldItem || blockHeldItem.count <= 0) return;
 
-        // Water bucket placement
         if (blockHeldItem.itemId === ITEM.WATER_BUCKET) {
           setBlock(nx, ny, nz, BLOCK.WATER);
           blockHeldItem.itemId = ITEM.BUCKET;
           sounds.playTone(300, 'square', 0.1);
-          rebuildWorldMesh(scene);
           renderInventorySlots();
           return;
         }
 
         setBlock(nx, ny, nz, player.selectedBlock);
         sounds.playTone(300, 'square', 0.1);
-        rebuildWorldMesh(scene);
 
-        // Decrease item count
         blockHeldItem.count--;
         if (blockHeldItem.count <= 0) {
           inventory.setSlot(SLOT.HOTBAR_START + inventory.selectedHotbar, null);
@@ -1672,28 +1419,27 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
     }
   };
 
-  const breakBlock = (bx: number, by: number, bz: number, blockId: number, scene: Scene) => {
+  const breakBlock = (bx: number, by: number, bz: number, blockId: number) => {
     setBlock(bx, by, bz, BLOCK.AIR);
     sounds.playTone(200, 'square', 0.1);
-    rebuildWorldMesh(scene);
     const drops = getBlockDrops(blockId);
     drops.forEach(itemId => addDropToInventory(itemId));
     if (drops.length > 0) {
-      showNotification(`+${drops.length} ${getBlockName(drops[0])}`);
+      showNotification('+' + drops.length + ' ' + getBlockName(drops[0]));
     }
     player.xp += 0.5;
     if (player.xp >= player.xpLevel * 10 + 10) {
       player.xp = 0;
       player.xpLevel++;
     }
-    if (miningOverlay) miningOverlay.visible = false;
+    mining.active = false;
+    mining.progress = 0;
   };
 
   const onMouseUp = (e: MouseEvent) => {
     if (e.button === 0 && mining.active) {
       mining.active = false;
       mining.progress = 0;
-      if (miningOverlay) miningOverlay.visible = false;
     }
   };
 
@@ -1729,12 +1475,34 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
     const keyIdx = keys.indexOf(e.code);
     if (keyIdx !== -1) {
       player.selectedBlock = HOTBAR_BLOCKS[keyIdx];
-      heldBlock.material = createBlockMaterial(player.selectedBlock);
       updateHotbarUI();
     }
     if (e.code === 'KeyF') {
       if (document.fullscreenElement) void document.exitFullscreen();
       else void canvas.requestFullscreen();
+    }
+    if (e.code === 'KeyE') {
+      if (player.gameMode === 'survival' && !isEating) {
+        for (let i = 0; i < 9; i++) {
+          const slot = inventory.getSlot(SLOT.HOTBAR_START + i);
+          if (slot && slot.count > 0) {
+            const props = getItemProperties(slot.itemId);
+            if (props?.category === 'food' && props.foodPoints) {
+              isEating = true;
+              eatingProgress = 0;
+              eatingItem = slot.itemId;
+              inventory.selectedHotbar = i;
+              if (HOTBAR_BLOCKS[inventory.selectedHotbar] !== undefined) {
+                player.selectedBlock = HOTBAR_BLOCKS[inventory.selectedHotbar];
+              }
+              updateHotbarUI();
+              showNotification('Eating ' + props.displayName + '...');
+              break;
+            }
+          }
+        }
+      }
+      player.keys.delete('KeyE');
     }
   };
   const onKU = (e: KeyboardEvent) => player.keys.delete(e.code);
@@ -1742,19 +1510,14 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
   document.addEventListener('keyup', onKU);
 
   const onResize = () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight, false);
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
   };
   window.addEventListener('resize', onResize);
 
   // Settings event listeners
   const onSettingsChange = (e: Event) => {
     const customEvent = e as CustomEvent<{ fov?: number; difficulty?: string; renderDistance?: number }>;
-    if (customEvent.detail.fov !== undefined) {
-      camera.fov = customEvent.detail.fov;
-      camera.updateProjectionMatrix();
-    }
     if (customEvent.detail.difficulty !== undefined) {
       difficulty = customEvent.detail.difficulty;
     }
@@ -1768,9 +1531,8 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
   // Crafting table toggle
   window.addEventListener('crafting-table-toggle', ((e: CustomEvent<{ open: boolean }>) => {
     if (e.detail.open) {
-      // Render crafting grid
       for (let i = 0; i < 9; i++) {
-        const slotEl = document.querySelector(`[data-slot="table-${i}"]`) as HTMLElement | null;
+        const slotEl = document.querySelector('[data-slot="table-' + i + '"]') as HTMLElement | null;
         if (!slotEl) continue;
         const itemId = craftingGrid[i];
         if (itemId !== null) {
@@ -1778,7 +1540,7 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
           if (url) {
             const img = document.createElement('div');
             img.className = 'slot-item';
-            img.style.backgroundImage = `url(${url})`;
+            img.style.backgroundImage = 'url(' + url + ')';
             slotEl.innerHTML = '';
             slotEl.appendChild(img);
           }
@@ -1795,7 +1557,6 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
   window.addEventListener('furnace-toggle', ((e: CustomEvent<{ open: boolean }>) => {
     if (e.detail.open) {
       renderInventorySlots();
-      // Render furnace slots
       const inEl = document.querySelector('[data-slot="furnace-in"]') as HTMLElement | null;
       const fuelEl = document.querySelector('[data-slot="furnace-fuel"]') as HTMLElement | null;
       const outEl = document.querySelector('[data-slot="furnace-out"]') as HTMLElement | null;
@@ -1805,7 +1566,7 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
         if (url) {
           const img = document.createElement('div');
           img.className = 'slot-item';
-          img.style.backgroundImage = `url(${url})`;
+          img.style.backgroundImage = 'url(' + url + ')';
           inEl.appendChild(img);
         }
       }
@@ -1815,7 +1576,7 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
         if (url) {
           const img = document.createElement('div');
           img.className = 'slot-item';
-          img.style.backgroundImage = `url(${url})`;
+          img.style.backgroundImage = 'url(' + url + ')';
           fuelEl.appendChild(img);
         }
       }
@@ -1825,7 +1586,7 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
         if (url) {
           const img = document.createElement('div');
           img.className = 'slot-item';
-          img.style.backgroundImage = `url(${url})`;
+          img.style.backgroundImage = 'url(' + url + ')';
           outEl.appendChild(img);
         }
       }
@@ -1837,8 +1598,9 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
     player.isDead = false;
     player.health = 20;
     player.hunger = 20;
-    player.pos.set(0, getElevation(0, 0) + 2, 0);
-    player.vel.set(0, 0, 0);
+    player.saturation = 5;
+    v3set(player.pos, 0, getElevation(0, 0) + 2, 0);
+    v3set(player.vel, 0, 0, 0);
   };
   window.addEventListener('player-respawn', onRespawn);
 
@@ -1847,49 +1609,25 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
     if (e.detail.open) renderInventorySlots();
   }) as EventListener);
 
-  // Weather particles
-  const weatherParticles: Mesh[] = [];
+  // Weather particles (canvas-based)
+  interface RainDrop { x: number; y: number; z: number; }
+  const rainDrops: RainDrop[] = [];
   const WEATHER_COUNT = 200;
   let weatherType: 'clear' | 'rain' | 'snow' = 'clear';
-  const initWeatherParticles = () => {
-    const geo = new BoxGeometry(0.05, 0.3, 0.05);
-    const mat = new MeshLambertMaterial({ color: 0xccddff, transparent: true, opacity: 0.6 });
+  const initRainDrops = () => {
     for (let i = 0; i < WEATHER_COUNT; i++) {
-      const p = new Mesh(geo, mat);
-      p.position.set(
-        (Math.random() - 0.5) * 40,
-        Math.random() * 30 + 5,
-        (Math.random() - 0.5) * 40,
-      );
-      p.visible = false;
-      scene.add(p);
-      weatherParticles.push(p);
+      rainDrops.push({
+        x: (Math.random() - 0.5) * 40,
+        y: Math.random() * 30 + 5,
+        z: (Math.random() - 0.5) * 40,
+      });
     }
   };
-  initWeatherParticles();
+  initRainDrops();
 
-  const updateWeather = (dt: number) => {
-    const timeOfDay = player.daytime;
-    const isNight = timeOfDay < 0.25 || timeOfDay > 0.75;
-    const newType = isNight && Math.random() < 0.001 ? (Math.random() < 0.5 ? 'rain' : 'snow') : 'clear';
-    if (newType !== 'clear') weatherType = newType;
-    else if (Math.random() < 0.0005) weatherType = 'clear';
-
-    const isPrecip = weatherType === 'rain' || weatherType === 'snow';
-    for (const p of weatherParticles) {
-      p.visible = isPrecip;
-      if (isPrecip) {
-        p.position.y -= dt * 20;
-        p.position.x = player.pos.x + (Math.random() - 0.5) * 40;
-        p.position.z = player.pos.z + (Math.random() - 0.5) * 40;
-        if (p.position.y < player.pos.y - 5) {
-          p.position.y = player.pos.y + 25 + Math.random() * 5;
-        }
-      }
-    }
-  };
-  
-  // Adventures mode - hostile mobs spawn at night
+  // Track last frame's target for highlight rendering
+  let lastTarget: BlockHit | null = null;
+  void lastTarget;
 
   let raf = 0, lastT = performance.now();
   const animate = () => {
@@ -1897,11 +1635,13 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
     const now = performance.now(), dt = Math.min((now - lastT) / 1000, 0.05);
     lastT = now;
     attackCooldown = Math.max(0, attackCooldown - dt);
-    handSwing = Math.max(0, handSwing - dt * 4.5);
-    handPivot.rotation.x = -0.2 + Math.sin(handSwing * Math.PI) * 0.7;
 
     // Weather
-    updateWeather(dt);
+    const timeOfDay = player.daytime;
+    const isNight = timeOfDay > 0.5 && timeOfDay < 1;
+    const newType = isNight && Math.random() < 0.001 ? (Math.random() < 0.5 ? 'rain' : 'snow') : 'clear';
+    if (newType !== 'clear') weatherType = newType;
+    else if (Math.random() < 0.0005) weatherType = 'clear';
 
     // Furnace tick
     if (furnaceFuel && furnaceFuel.burnTime > 0) {
@@ -1931,29 +1671,17 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
     // Mining progress
     if (mining.active) {
       mining.progress += dt;
-      if (miningOverlay) {
-        const pct = Math.min(1, mining.progress / mining.total);
-        miningOverlay.position.set(mining.targetX, mining.targetY, mining.targetZ);
-        // Show crack stages: 0-10% invisible, 10-90% progressive cracks, 90-100% almost broken
-        if (pct < 0.1) {
-          (miningOverlay.material as MeshStandardMaterial).opacity = 0;
-        } else if (pct < 0.9) {
-          (miningOverlay.material as MeshStandardMaterial).opacity = (pct - 0.1) * 0.6;
-        } else {
-          (miningOverlay.material as MeshStandardMaterial).opacity = 0.48 + (pct - 0.9) * 0.5;
-        }
-      }
       if (mining.progress >= mining.total) {
         const blockId = getBlock(mining.targetX, mining.targetY, mining.targetZ);
         if (blockId !== BLOCK.AIR && blockId !== BLOCK.BEDROCK) {
-          breakBlock(mining.targetX, mining.targetY, mining.targetZ, blockId, scene);
+          breakBlock(mining.targetX, mining.targetY, mining.targetZ, blockId);
         }
         mining.active = false;
         mining.progress = 0;
       }
     }
 
-    // Fluid simulation — every 20 frames (≈1 tick/sec at 60fps)
+    // Fluid simulation - every 20 frames (~1 tick/sec at 60fps)
     fluidTickCounter++;
     if (fluidTickCounter >= 20) {
       fluidTickCounter = 0;
@@ -1968,7 +1696,6 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
               const wz = baseZ + lz;
               const id = chunk.blocks[localIndex(lx, ly, lz)];
               if (!isWater(id) && !isLava(id)) continue;
-              // Lava-water interactions per wiki: water+lava source→obsidian, water+flowing lava (lateral)→cobblestone, flowing lava down→stone
               if (isLava(id)) {
                 for (const [dx, dy, dz] of [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]]) {
                   const nid = getBlock(wx + dx, ly + dy, wz + dz);
@@ -2004,7 +1731,7 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
         for (const u of updates) {
           setBlock(u.x, u.y, u.z, u.blockId as BlockId);
         }
-        rebuildWorldMesh(scene);
+        rebuildWorldMesh();
       }
     }
 
@@ -2013,16 +1740,13 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
     // Eating timer
     if (isEating && eatingItem !== null) {
       eatingProgress += dt;
-      // Eating animation - hand swings
-      handSwing = Math.min(1, eatingProgress / EATING_DURATION);
       if (eatingProgress >= EATING_DURATION) {
-        // Complete eating - restore hunger
         const props = getItemProperties(eatingItem);
         if (props?.foodPoints) {
           player.hunger = Math.min(20, player.hunger + props.foodPoints);
-          showNotification(`Ate ${props.displayName} (+${props.foodPoints} hunger)`);
+          player.saturation = Math.min(player.hunger, player.saturation + props.foodPoints * 1.5);
+          showNotification('Ate ' + props.displayName + ' (+' + props.foodPoints + ' hunger)');
         }
-        // Consume item
         const heldItem = inventory.getSlot(SLOT.HOTBAR_START + inventory.selectedHotbar);
         if (heldItem && heldItem.itemId === eatingItem) {
           heldItem.count--;
@@ -2039,41 +1763,21 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
 
     // Day/night cycle (20 minute cycle matching Minecraft)
     player.daytime = (player.daytime + dt / 1200) % 1.0;
-    const sunAngle = player.daytime * Math.PI * 2;
-    const sunHeight = Math.sin(sunAngle);
-    const nightness = Math.max(0, -sunHeight);
-    const dayness = Math.max(0, sunHeight);
-    const skyR = Math.floor(0x33 * nightness + 0x87 * dayness);
-    const skyG = Math.floor(0x44 * nightness + 0xce * dayness);
-    const skyB = Math.floor(0x66 * nightness + 0xeb * dayness);
-    const skyColor = (skyR << 16) | (skyG << 8) | skyB;
-    scene.background = new Color(skyColor);
-    scene.fog = new Fog(skyColor, 60, 120);
-    sun.intensity = 0.3 + dayness * 1.1;
-    sun.position.set(
-      Math.cos(sunAngle) * 400,
-      Math.sin(sunAngle) * 400,
-      200,
-    );
 
     // Stream chunks
     const [pcx, pcz] = worldToChunk(Math.floor(player.pos.x), Math.floor(player.pos.z));
-    let needsRebuild = false;
     for (let dx = -renderDistance; dx <= renderDistance; dx++) {
       for (let dz = -renderDistance; dz <= renderDistance; dz++) {
         const cx = pcx + dx;
         const cz = pcz + dz;
         if (!getChunk(cx, cz)) {
           getOrCreateChunk(cx, cz);
-          needsRebuild = true;
         }
       }
     }
-    if (needsRebuild) rebuildWorldMesh(scene);
 
     // Update tappables
     spawnTappablesAroundPlayer(player.pos.x, player.pos.z);
-    updateTappableMeshes(scene, player.pos, performance.now());
 
     // Update mobs
     spawnMobsAroundPlayer(player.pos.x, player.pos.z, player.daytime);
@@ -2083,59 +1787,47 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
         mobs.delete(id);
       }
     }
-    updateMobMeshes(scene, player.pos);
 
-    camera.position.copy(player.pos);
-    camera.rotation.order = 'YXZ';
-    camera.rotation.y = player.yaw;
-    camera.rotation.x = player.pitch;
+    // Block highlight via ray marching
+    const eyePos = v3(player.pos.x, player.pos.y, player.pos.z);
+    const targetHit = player.isPointerLocked ? rayMarch(eyePos, player.yaw, player.pitch, 6) : null;
+    lastTarget = targetHit;
 
-    // Block highlight
-    const raycaster = new Raycaster();
-    raycaster.far = 6;
-    raycaster.setFromCamera(new Vector2(0, 0), camera);
-    const intersects = raycaster.intersectObjects(worldMeshes);
-    if (player.isPointerLocked && intersects.length > 0) {
-      const intersect = intersects[0];
-      if (intersect.instanceId !== undefined) {
-        const matrix = new Matrix4();
-        (intersect.object as InstancedMesh).getMatrixAt(intersect.instanceId, matrix);
-        const pos = new Vector3();
-        pos.setFromMatrixPosition(matrix);
-        blockHighlight.position.copy(pos);
-        blockHighlight.visible = true;
-      } else {
-        blockHighlight.visible = false;
+    // Weather update
+    const isPrecip = weatherType === 'rain' || weatherType === 'snow';
+    for (const p of rainDrops) {
+      if (isPrecip) {
+        p.y -= dt * 20;
+        p.x = player.pos.x + (Math.random() - 0.5) * 40;
+        p.z = player.pos.z + (Math.random() - 0.5) * 40;
+        if (p.y < player.pos.y - 5) {
+          p.y = player.pos.y + 25 + Math.random() * 5;
+        }
       }
-    } else {
-      blockHighlight.visible = false;
     }
 
+    // Render 3D world with WebGL, HUD overlay with Canvas 2D
+    renderFrameWebGL(canvas, player);
+    if (overlayCtx) renderHUD(overlayCtx, canvas.width, canvas.height, player, targetHit);
+
+    // HUD text overlay
     if (hudEl) {
       const hearts = Math.ceil(Math.max(0, Math.min(20, player.health)) / 2);
       const foodBars = Math.ceil(Math.max(0, Math.min(20, player.hunger)) / 2);
-      const heartStr = Array.from({ length: 10 }, (_, i) => `<span class="${i < hearts ? 'full' : ''}" style="color:${i < hearts ? '#df3d37' : '#3a3a3a'}">&#9829;</span>`).join('');
-      const foodStr = Array.from({ length: 10 }, (_, i) => `<span style="display:inline-block;width:10px;height:10px;border:2px solid #1b1b1b;border-radius:60% 45% 55% 45%;background:${i < foodBars ? '#bf6b32' : '#3a3a3a'};transform:rotate(-28deg) scale(.85);"></span>`).join('');
-      const timeOfDay = player.daytime < 0.25 ? 'Night' : player.daytime < 0.5 ? 'Dawn' : player.daytime < 0.75 ? 'Day' : 'Dusk';
+      const timeOfDay2 = player.daytime < 0.1 ? 'Dawn' : player.daytime < 0.4 ? 'Day' : player.daytime < 0.6 ? 'Dusk' : player.daytime < 0.9 ? 'Night' : 'Dawn';
       const oxygenBubbles = player.oxygen < 300
-        ? ` · ${Array.from({length: 10}, (_, i) => `<span style="color:${i < Math.ceil(player.oxygen / 30) ? '#55ccff' : '#3a3a3a'}">o</span>`).join('')}`
+        ? ' \u00b7 O2:' + Math.ceil(player.oxygen / 30) + '/10'
         : '';
-      hudEl.innerHTML = `<span class="green">WASD Move · SPACE Jump · SHIFT Sprint · Mouse Look</span><br>
-        <span class="white">X:${Math.floor(player.pos.x)} Y:${Math.floor(player.pos.y)} Z:${Math.floor(player.pos.z)}</span><br>
-        <span class="white">Chunks: ${chunks.size} | ${timeOfDay}</span><br>
-        <span style="font-size:14px">${heartStr} ${foodStr}${oxygenBubbles}</span>`;
+      hudEl.innerHTML = '<span class="green">WASD Move \u00b7 SPACE Jump \u00b7 SHIFT Sprint \u00b7 Mouse Look</span><br>'
+        + '<span class="white">X:' + Math.floor(player.pos.x) + ' Y:' + Math.floor(player.pos.y) + ' Z:' + Math.floor(player.pos.z) + '</span><br>'
+        + '<span class="white">Chunks: ' + chunks.size + ' | ' + timeOfDay2 + '</span><br>'
+        + '<span style="font-size:14px">'
+        + Array.from({ length: 10 }, (_, i) => '<span class="' + (i < hearts ? 'full' : '') + '" style="color:' + (i < hearts ? '#df3d37' : '#3a3a3a') + '">\u2665</span>').join('')
+        + ' '
+        + Array.from({ length: 10 }, (_, i) => '<span style="display:inline-block;width:10px;height:10px;border:2px solid #1b1b1b;border-radius:60% 45% 55% 45%;background:' + (i < foodBars ? '#bf6b32' : '#3a3a3a') + ';transform:rotate(-28deg) scale(.85);"></span>').join('')
+        + oxygenBubbles
+        + '</span>';
     }
-    
-    // Update XP bar
-    const xpFill = document.getElementById('xp-fill');
-    const xpLevel = document.getElementById('xp-level');
-    if (xpFill && xpLevel) {
-      const xpForNextLevel = player.xpLevel * 10 + 10;
-      const xpPercent = (player.xp / xpForNextLevel) * 100;
-      xpFill.style.width = `${xpPercent}%`;
-      xpLevel.textContent = player.xpLevel.toString();
-    }
-    renderer.render(scene, camera);
   };
   animate();
 
@@ -2145,6 +1837,7 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
     playerPos: { x: Math.floor(player.pos.x), y: Math.floor(player.pos.y), z: Math.floor(player.pos.z) },
     health: player.health,
     hunger: player.hunger,
+    saturation: player.saturation,
     oxygen: player.oxygen,
     xp: player.xp,
     xpLevel: player.xpLevel,
@@ -2156,10 +1849,8 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
     const steps = Math.max(1, Math.round(ms / (1000 / 60)));
     for (let i = 0; i < steps; i++) {
       attackCooldown = Math.max(0, attackCooldown - 1 / 60);
-      handSwing = Math.max(0, handSwing - (1 / 60) * 4.5);
       updatePlayer(player, 1 / 60, difficulty);
     }
-    renderer.render(scene, camera);
   };
 
   return () => {
@@ -2173,21 +1864,7 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
     canvas.removeEventListener('mousedown', onMouseDown);
     canvas.removeEventListener('contextmenu', onContextMenu);
     window.removeEventListener('select-slot', onSelectSlot);
-    scene.remove(blockHighlight);
-    highlightGeo.dispose();
-    edges.dispose();
-    highlightMat.dispose();
-    scene.traverse((o) => {
-      const m = o as Mesh;
-      if (m.geometry) m.geometry.dispose();
-      const mt = m.material;
-      if (mt) {
-        if (Array.isArray(mt)) mt.forEach((x) => (x as MeshStandardMaterial).dispose());
-        else (mt as MeshStandardMaterial).dispose();
-      }
-    });
-    renderer.dispose();
-    textureCache.forEach((texture) => texture.dispose());
+    if (overlayCanvas && overlayCanvas.parentElement) overlayCanvas.parentElement.removeChild(overlayCanvas);
     delete window.render_game_to_text;
     delete window.advanceTime;
   };
@@ -2225,7 +1902,7 @@ function getBlockName(blockId: number): string {
     [BLOCK.OAK_LEAVES]: 'Oak Leaves',
     [BLOCK.STICK]: 'Stick',
   };
-  return names[blockId] ?? `Block ${blockId}`;
+  return names[blockId] ?? 'Block ' + blockId;
 }
 
 function showNotification(text: string): void {
@@ -2236,6 +1913,30 @@ function showNotification(text: string): void {
   notif.style.cssText = 'position:fixed;bottom:120px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.8);color:#fff;padding:8px 16px;border-radius:4px;font-size:14px;z-index:1000;pointer-events:none;';
   document.body.appendChild(notif);
   setTimeout(() => notif.remove(), 2000);
+}
+
+function lerpColor(a: number, b: number, t: number): number {
+  const ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
+  const br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
+  return (Math.round(ar + (br - ar) * t) << 16) | (Math.round(ag + (bg - ag) * t) << 8) | Math.round(ab + (bb - ab) * t);
+}
+
+function interpolateSkyColor(t: number): number {
+  const keyframes: [number, number][] = [
+    [0, 0xFF8C5A],
+    [0.25, 0x87CEEB],
+    [0.5, 0xE37341],
+    [0.75, 0x0A0A2E],
+    [1, 0xFF8C5A],
+  ];
+  for (let i = 0; i < keyframes.length - 1; i++) {
+    const [t0, c0] = keyframes[i];
+    const [t1, c1] = keyframes[i + 1];
+    if (t >= t0 && t <= t1) {
+      return lerpColor(c0, c1, (t - t0) / (t1 - t0));
+    }
+  }
+  return keyframes[keyframes.length - 1][1];
 }
 
 declare global {

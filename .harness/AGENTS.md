@@ -1,44 +1,53 @@
-# Harness Team
+# Harness — CEO Contract
 
 ## Purpose
 
-Defines the agent team that operates on SquidGame100 MineCraft under the CTO (`mavis`). Each rein is scoped to one responsibility; orchestration, planning, and final judgment stay with the CTO.
+I am the CEO. I orchestrate the research-driven development loop. I do not write game code.
 
-## Ownership
+**Every cycle:** player-1 researches minecraft.wiki → files critique as issues → game-fixer fixes each issue → game-reviewer verifies → I judge → repeat.
 
-- `reins/browser-qa/` — drives the running game in a real browser via Playwright; files reproducible issues.
-- `reins/player-1/` — playability critic: frame pacing, input feel, onboarding, HUD legibility, resilience, and the gap-to-playable. Files `playability` issues only for in-scope regressions.
-- `reins/game-fixer/` — implements a single issue's fix, scoped to one package, verified locally.
-- `reins/game-reviewer/` — independently re-runs verification and issues PASS/FAIL.
+We ship working code. Implementation velocity over clever minimalism.
 
-## Local Contracts
+## The Loop
 
-- Every task reads the DOX chain (root `AGENTS.md` → `packages/AGENTS.md` → owning child) before editing.
-- One task = one bounded deliverable. Do not bundle discoveries with fixes, or fixes with reviews.
-- `game-fixer` never grades its own work; `game-reviewer` never edits source.
-- All reins keep Stage 0 runnable: `npm run typecheck` and `npm run build` must pass at every handoff.
+```
+┌─────────────────────────────────────────────────────┐
+│  player-1: research next wiki topic, file critique  │
+│           ↓                                         │
+│  CEO: triage issues, route to game-fixer            │
+│           ↓                                         │
+│  game-fixer: implement minimum fix (one per task)   │
+│           ↓                                         │
+│  game-reviewer: verify fix, PASS/FAIL               │
+│           ↓                                         │
+│  CEO: accept/reject → loop to player-1 next topic   │
+└─────────────────────────────────────────────────────┘
+```
 
-## Work Guidance
+## When I delegate
 
-- Use the CTO (`mavis`) as the only entry point. The CTO launches `mavis team plan` and makes accept/reject decisions.
-- Typical cycle per defect:
-  1. `browser-qa` reproduces and files the issue.
-  2. `game-fixer` (depends_on browser-qa deliverable) implements the scoped fix.
-  3. `game-reviewer` (depends_on game-fixer, role: verify-as-task) re-runs verification and emits PASS/FAIL.
-  4. CTO decides: accept / manual_retry / reject / override_accept.
-- Prefer the smallest sufficient plan. Do not pad the team.
-- See `/Users/getwinharris/Dev/MineCraft/AGENTS.md` and `packages/AGENTS.md` for repo-wide rules.
+| Phase | Agent | What they do |
+|---|---|---|
+| Research | `player-1` | Reads minecraft.wiki page, compares to our code, files every discrepancy as an issue |
+| Fix | `game-fixer` | One issue per task. Correct implementation matching vanilla behavior. |
+| Verify | `game-reviewer` | Re-runs typecheck+build+smoke. PASS/FAIL on the diff. |
 
-## Verification
+I delegate **everything** — I never write game source. I only read state, route tasks, and judge verdicts.
 
-- `npm run typecheck`
-- `npm run build`
-- Client changes also: web-game smoke (Playwright + `window.render_game_to_text()` / `window.advanceTime(ms)`).
-- Server changes also: `curl http://localhost:8080/healthz`.
+## How I judge
+
+- **Verification gates:** `npm run typecheck`, `npm run build`, relevant smoke
+- **DOX compliance:** Nearest AGENTS.md updated, stale bullets removed
+- **Scope discipline:** One issue per task, one package per fix, no stray edits
+- **Verdicts:**
+  - `accept` — reviewer PASSed + diff is minimal and correct
+  - `manual_retry` — reviewer FAILed for a specific fixable reason
+  - `reject` — direction is wrong, too much code, wrong abstraction
+  - `override_accept` — reviewer wrong but diff acceptable
 
 ## Child DOX Index
 
-- `reins/browser-qa/AGENTS.md` — browser-driven issue discovery.
-- `reins/player-1/AGENTS.md` — playability verdict + gap-to-playable (frame pacing, input feel, HUD, resilience).
-- `reins/game-fixer/AGENTS.md` — scoped implementation per issue.
-- `reins/game-reviewer/AGENTS.md` — independent verdict per fix.
+- `reins/player-1/AGENTS.md` — wiki research, critique → issues, gap analysis.
+- `reins/game-fixer/AGENTS.md` — scoped implementation, correctness-driven.
+- `reins/game-reviewer/AGENTS.md` — independent PASS/FAIL, correctness check.
+- `reins/browser-qa/AGENTS.md` — browser-driven smoke tests (supplemental to player-1).

@@ -13,6 +13,11 @@ import type { Tappable, ToolType, MobType, GameMode } from '@sg100/shared';
 import { placeAllLandmarks } from './landmarks.js';
 // --- Raw WebGL 2.0 voxel renderer — zero dependencies (inlined) -----------
 
+interface AtlasEntry {
+  u: number; v: number;
+  uw: number; vh: number;
+}
+
 interface Renderer {
   gl: WebGL2RenderingContext;
   program: WebGLProgram;
@@ -20,7 +25,112 @@ interface Renderer {
   uTexture: WebGLUniformLocation;
   aPos: number;
   aUv: number;
-  textures: Map<number, WebGLTexture>;
+  atlas: WebGLTexture;
+  atlasEntries: Map<string, AtlasEntry>;
+}
+
+function loadImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Failed to load ' + url));
+    img.src = url;
+  });
+}
+
+const ATLAS_TILE = 16;
+const ATLAS_COLS = 16;
+
+function buildTextureAtlas(gl: WebGL2RenderingContext): { atlas: WebGLTexture; entries: Map<string, AtlasEntry> } | null {
+  const canvas = document.createElement('canvas');
+  const size = ATLAS_TILE * ATLAS_COLS;
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, size, size);
+
+  const entries = new Map<string, AtlasEntry>();
+  let slotIndex = 0;
+
+  for (let blockId = 1; blockId <= 600; blockId++) {
+    const faces: ('all' | 'top' | 'bottom' | 'side' | 'front')[] = ['all', 'top', 'bottom', 'side', 'front'];
+    for (const face of faces) {
+      const url = getTextureUrl(blockId, face);
+      if (!url || entries.has(url)) continue;
+      const col = slotIndex % ATLAS_COLS;
+      const row = Math.floor(slotIndex / ATLAS_COLS);
+      if (row >= ATLAS_COLS) continue;
+      entries.set(url, {
+        u: col / ATLAS_COLS,
+        v: row / ATLAS_COLS,
+        uw: 1 / ATLAS_COLS,
+        vh: 1 / ATLAS_COLS,
+      });
+      slotIndex++;
+    }
+  }
+
+  const missingEntry: AtlasEntry = { u: 0, v: 0, uw: 0.0625, vh: 0.0625 };
+  entries.set('__missing__', missingEntry);
+
+  // Draw checkerboard for missing/broken textures
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, ATLAS_TILE, ATLAS_TILE);
+  for (let py = 0; py < ATLAS_TILE; py++) {
+    for (let px = 0; px < ATLAS_TILE; px++) {
+      const isMagenta = ((px >> 3) + (py >> 3)) % 2 === 0;
+      ctx.fillStyle = isMagenta ? '#ff00ff' : '#000000';
+      ctx.fillRect(px, py, 1, 1);
+    }
+  }
+
+  // Load textures asynchronously
+  Promise.all(Array.from(entries.entries()).map(async ([url, entry]) => {
+    if (url === '__missing__') return;
+    try {
+      const img = await loadImage('/textures/blocks/' + url);
+      const col = Math.round(entry.u * ATLAS_COLS);
+      const row = Math.round(entry.v * ATLAS_COLS);
+      ctx.drawImage(img, col * ATLAS_TILE, row * ATLAS_TILE, ATLAS_TILE, ATLAS_TILE);
+    } catch {
+      // leave slot as missing texture
+    }
+  })).then(() => {
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+  });
+
+  return { atlas: null as unknown as WebGLTexture, entries };
+}
+
+function getAtlasEntry(atlas: Map<string, AtlasEntry>, blockId: number, face: number): AtlasEntry {
+  const faceNames: ('all' | 'top' | 'bottom' | 'side' | 'front')[] = ['all', 'top', 'bottom', 'side', 'front'];
+  const fallbackFaces: ('side' | 'top' | 'bottom' | 'front')[] = ['side', 'top', 'bottom', 'front'];
+  const name = faceNames[face] || 'all';
+  const url = getTextureUrl(blockId, name) || getTextureUrl(blockId, 'all');
+  if (url) {
+    const entry = atlas.get(url);
+    if (entry) return entry;
+  }
+  // Try fallback
+  for (const f of fallbackFaces) {
+    const u = getTextureUrl(blockId, f);
+    if (u) {
+      const entry = atlas.get(u);
+      if (entry) return entry;
+    }
+  }
+  return atlas.get('__missing__')!;
 }
 
 function initRenderer(canvas: HTMLCanvasElement): Renderer | null {
@@ -64,7 +174,10 @@ void main() {
 
   gl.uniform1i(uTexture, 0);
 
-  return { gl, program, uMvp, uTexture, aPos, aUv, textures: new Map() };
+  const atlasData = buildTextureAtlas(gl);
+  if (!atlasData) return null;
+
+  return { gl, program, uMvp, uTexture, aPos, aUv, atlas: atlasData.atlas, atlasEntries: atlasData.entries };
 }
 
 function resizeRenderer(r: Renderer, w: number, h: number): void {
@@ -116,15 +229,6 @@ const FACE_VERTS: [number,number,number, number,number,number, number,number,num
   [0,0,0, 0,1,0, 1,1,0, 1,0,0],
 ];
 
-const FACE_UVS: [number,number, number,number, number,number, number,number][] = [
-  [0,0, 1,0, 1,1, 0,1],
-  [0,0, 1,0, 1,1, 0,1],
-  [0,0, 1,0, 1,1, 0,1],
-  [0,0, 1,0, 1,1, 0,1],
-  [0,0, 1,0, 1,1, 0,1],
-  [0,0, 1,0, 1,1, 0,1],
-];
-
 interface ChunkMesh {
   vao: WebGLVertexArrayObject;
   indexCount: number;
@@ -157,12 +261,17 @@ function buildChunkMesh(r: Renderer, blocks: Uint16Array, cx: number, cz: number
         for (let f = 0; f < 6; f++) {
           if (faces[f] !== 0 && isSolid(faces[f])) continue;
           const verts = FACE_VERTS[f];
-          const u = FACE_UVS[f];
+          const entry = getAtlasEntry(r.atlasEntries, blockId, f);
+          const u0 = entry.u, v0 = entry.v, uw = entry.uw, vh = entry.vh;
           const base = idx * 4;
-          for (let v = 0; v < 4; v++) {
-            positions.push(lx + verts[v*3], ly + verts[v*3+1], lz + verts[v*3+2]);
-            uvs.push(u[v*2], u[v*2+1]);
-          }
+          positions.push(lx + verts[0], ly + verts[1], lz + verts[2]);
+          uvs.push(u0, v0);
+          positions.push(lx + verts[3], ly + verts[4], lz + verts[5]);
+          uvs.push(u0 + uw, v0);
+          positions.push(lx + verts[6], ly + verts[7], lz + verts[8]);
+          uvs.push(u0 + uw, v0 + vh);
+          positions.push(lx + verts[9], ly + verts[10], lz + verts[11]);
+          uvs.push(u0, v0 + vh);
           indices.push(base, base+1, base+2, base, base+2, base+3);
           idx++;
         }
@@ -1179,6 +1288,9 @@ function renderFrameWebGL(canvas: HTMLCanvasElement, player: PlayerState): void 
   const cz = eyeZ + Math.cos(yaw) * Math.cos(pitch);
   const view = lookAt(eyeX, eyeY, eyeZ, cx, cy, cz, 0, 1, 0);
   const mvp = mulMat4(proj, view);
+
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, renderer.atlas);
 
   for (const [, chunk] of chunks) {
     if (chunk.mesh) renderChunkMesh(renderer, chunk.mesh, mvp);

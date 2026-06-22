@@ -2,7 +2,7 @@
   "name": "squidgame100-minecraft",
   "version": "0.1.0",
   "private": true,
-  "description": "SquidGame100 MineCraft — a 100-player, permadeath, Squid Game–themed voxel battle-royale in the browser.",
+  "description": "MineCraft — a browser voxel survival sandbox with real Earth terrain, wiki textures, and streaming infinite chunks.",
   "license": "UNLICENSED",
   "type": "module",
   "engines": {
@@ -22,9 +22,11 @@
     "format:check": "prettier --check .",
     "dev:client": "npm -w @sg100/client run dev",
     "dev:server": "npm -w @sg100/server run dev",
+    "generate:map": "node tools/generate-project-map.mjs",
     "test": "npm run test --workspaces --if-present"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.0",
     "@types/node": "^22.10.0",
     "@typescript-eslint/eslint-plugin": "^8.18.0",
     "@typescript-eslint/parser": "^8.18.0",

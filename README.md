@@ -7,7 +7,9 @@ TypeScript monorepo: three.js + Web Workers client, authoritative Node WebSocket
 
 ## Status
 
-Stage 0 — Foundation (workspaces, client/server shells, Docker, CI/CD).
+Voxel survival/PvP foundation in progress. The browser client currently has an instanced voxel world, original procedural 16px block textures, first-person movement and hand, block mining/placement, a nine-slot hotbar, survival HUD, and a melee combat opponent. Squid Game presentation is paused while the standalone sandbox foundation is built out.
+
+The current textures and models are original project assets; proprietary Minecraft assets are not bundled.
 
 ## Architecture
 

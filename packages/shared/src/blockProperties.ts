@@ -362,8 +362,20 @@ export function getHarvestTime(
   return ticks / 20;
 }
 
-export function getMiningSpeed(blockId: number, toolId: number, toolType: ToolType, toolTier: number): number {
-  const harvestTime = getHarvestTime(blockId, toolId, toolType, toolTier);
+export function getMiningSpeed(
+  blockId: number,
+  toolId: number,
+  toolType: ToolType,
+  toolTier: number,
+  efficiencyLevel = 0,
+  hasteLevel = 0,
+  conduitPowerLevel = 0,
+  miningFatigueLevel = 0,
+  underwater = false,
+  hasAquaAffinity = false,
+  onGround = true
+): number {
+  const harvestTime = getHarvestTime(blockId, toolId, toolType, toolTier, efficiencyLevel, hasteLevel, conduitPowerLevel, miningFatigueLevel, underwater, hasAquaAffinity, onGround);
   if (harvestTime === 0) return Infinity;
   if (harvestTime === Infinity) return 0;
   return 1 / harvestTime;

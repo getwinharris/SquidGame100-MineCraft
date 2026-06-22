@@ -863,6 +863,10 @@ interface PlayerState {
   gameMode: GameMode;
   flying: boolean;
   nightVision: boolean;
+  efficiencyLevel: number; // Efficiency enchantment on held tool (0-5)
+  hasteLevel: number;     // Haste status effect from beacon (0-2)
+  conduitLevel: number;   // Conduit Power status effect (0-1)
+  miningFatigueLevel: number; // Mining Fatigue from elder guardian (0-4)
   _lastSpacePress: number;
   _spaceWasDown: boolean;
   _regenTimer: number;
@@ -893,6 +897,10 @@ function initPlayer(): PlayerState {
     gameMode: 'creative',
     flying: false,
     nightVision: false,
+    efficiencyLevel: 0,
+    hasteLevel: 0,
+    conduitLevel: 0,
+    miningFatigueLevel: 0,
     _lastSpacePress: 0,
     _spaceWasDown: false,
     _regenTimer: 0,
@@ -1825,7 +1833,17 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
           const props = getBlockProperties(blockId);
           if (props.hardness < 0) return;
           const { toolType, toolTier, toolId } = getHeldToolType(player.selectedBlock);
-          const harvestTime = getHarvestTime(blockId, toolId, toolType, toolTier);
+          const headInWater = getBlock(Math.floor(eyePos.x), Math.floor(eyePos.y), Math.floor(eyePos.z)) === BLOCK.WATER;
+          const harvestTime = getHarvestTime(
+            blockId, toolId, toolType, toolTier,
+            player.efficiencyLevel,
+            player.hasteLevel,
+            player.conduitLevel,
+            player.miningFatigueLevel,
+            headInWater,
+            false,
+            player.onGround
+          );
           // Instant break (hardness 0 or damage >= 1 per tick)
           if (harvestTime === 0) {
             breakBlock(bx, by, bz, blockId);

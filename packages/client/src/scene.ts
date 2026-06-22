@@ -1315,6 +1315,13 @@ function getBlockDrops(blockId: number, toolType: ToolType = 'none', toolTier: n
     }
     return [];
   }
+  // Cobweb drops: sword → string, shears → block
+  if (blockId === BLOCK.COBWEB) {
+    if (toolType === 'sword') return [ITEM.STRING];
+    if (toolType === 'shears') return [blockId];
+    return [];
+  }
+
   const drops: Record<number, number[]> = {
     [BLOCK.STONE]: [BLOCK.COBBLESTONE],
     [BLOCK.GRASS]: [BLOCK.DIRT],
@@ -1368,7 +1375,7 @@ function getBlockDrops(blockId: number, toolType: ToolType = 'none', toolTier: n
     [BLOCK.BONE_BLOCK]: [BLOCK.BONE_BLOCK],
     [BLOCK.SEA_LANTERN]: [BLOCK.SEA_LANTERN],
     [BLOCK.SLIME_BLOCK]: [BLOCK.SLIME_BLOCK],
-    [BLOCK.MELON]: [BLOCK.MELON],
+    [BLOCK.MELON]: [ITEM.MELON_SLICE],
     [BLOCK.NETHER_BRICK_STAIRS]: [BLOCK.NETHER_BRICK],
     [BLOCK.STONE_BRICK]: [BLOCK.STONE_BRICK],
     [BLOCK.STONE_BRICK_STAIRS]: [BLOCK.STONE_BRICK],

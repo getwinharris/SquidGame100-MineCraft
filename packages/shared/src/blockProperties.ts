@@ -302,12 +302,39 @@ export function getHarvestTime(
   if (blockId === BLOCK.COBWEB && (toolType === 'shears' || toolType === 'sword')) return 0;
 
   // === Determine base mining speed from tool item component ===
-  const isCorrectToolType = toolType !== 'none' && toolType === props.requiredTool;
+  let isCorrectToolType = toolType !== 'none' && toolType === props.requiredTool;
+
+  // Sword-specific: swords are effective on certain blocks
+  // wiki-source: https://minecraft.wiki/w/Sword#Breaking
+  if (toolType === 'sword' && !isCorrectToolType) {
+    const isSwordEffective =
+      blockId === BLOCK.BAMBOO ||
+      blockId === BLOCK.COCOA ||
+      blockId === BLOCK.MELON ||
+      blockId === BLOCK.PUMPKIN ||
+      blockId === BLOCK.VINE ||
+      blockId === BLOCK.SWEET_BERRY_BUSH ||
+      // All leaf blocks
+      blockId === BLOCK.OAK_LEAVES || blockId === BLOCK.SPRUCE_LEAVES ||
+      blockId === BLOCK.BIRCH_LEAVES || blockId === BLOCK.JUNGLE_LEAVES ||
+      blockId === BLOCK.ACACIA_LEAVES || blockId === BLOCK.DARK_OAK_LEAVES ||
+      blockId === BLOCK.AZALEA_LEAVES || blockId === BLOCK.CHERRY_LEAVES ||
+      // Wool blocks (306-321)
+      (blockId >= 306 && blockId <= 321);
+    if (isSwordEffective) {
+      isCorrectToolType = true;
+    }
+  }
 
   let baseSpeed = 1;
   if (isCorrectToolType) {
     const itemProps = getItemProperties(toolId);
     baseSpeed = itemProps?.miningSpeed ?? 1;
+  }
+
+  // Sword-specific: bamboo gets 30× speed (overrides base 1.5)
+  if (toolType === 'sword' && blockId === BLOCK.BAMBOO) {
+    baseSpeed = 30;
   }
 
   // Efficiency — only applies with correct tool

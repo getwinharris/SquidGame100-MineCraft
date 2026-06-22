@@ -1,7 +1,10 @@
 /**
  * Block properties — hardness, light, transparency, tool, gravity, flammability.
+ * 
+ * Breaking formula follows https://minecraft.wiki/w/Breaking#Speed
  */
 import { BLOCK } from './blocks.js';
+import { getItemProperties } from './items.js';
 
 export type ToolType = 'none' | 'pickaxe' | 'axe' | 'shovel' | 'hoe' | 'shears' | 'sword';
 
@@ -39,13 +42,13 @@ P[BLOCK.WATER] = b(100,500,0,true,false,false,false,false,'none',0,true);
 P[BLOCK.LAVA] = b(100,500,15,true,false,false,true,false,'none',0,true);
 P[BLOCK.SAND] = b(0.5,0.5,0,false,true,false,true,false,'shovel',0);
 P[BLOCK.GRAVEL] = b(0.6,0.6,0,false,true,false,true,false,'shovel',0);
-P[BLOCK.IRON_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',1);
+P[BLOCK.IRON_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',2);
 P[BLOCK.COAL_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',0);
-P[BLOCK.GOLD_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',2);
-P[BLOCK.DIAMOND_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',2);
-P[BLOCK.REDSTONE_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',2);
-P[BLOCK.LAPIS_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',1);
-P[BLOCK.OBSIDIAN] = b(50,1200,0,false,true,false,false,false,'pickaxe',3);
+P[BLOCK.GOLD_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',3);
+P[BLOCK.DIAMOND_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',3);
+P[BLOCK.REDSTONE_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',3);
+P[BLOCK.LAPIS_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',2);
+P[BLOCK.OBSIDIAN] = b(50,1200,0,false,true,false,false,false,'pickaxe',4);
 P[BLOCK.NETHERRACK] = b(0.4,0.4,0,false,true,false,false,false,'pickaxe',0);
 P[BLOCK.SOUL_SAND] = b(0.5,0.5,0,false,true,false,false,false,'shovel',0);
 P[BLOCK.GLOWSTONE] = b(0.3,0.3,15,true,false,false,false,false,'none',0);
@@ -61,7 +64,7 @@ P[BLOCK.SANDSTONE] = b(0.8,0.8,0,false,true,false,false,false,'pickaxe',0);
 P[BLOCK.IRON_BLOCK] = b(5,6,0,false,true,false,false,false,'pickaxe',1);
 P[BLOCK.DIAMOND_BLOCK] = b(5,6,0,false,true,false,false,false,'pickaxe',2);
 P[BLOCK.GOLD_BLOCK] = b(3,6,0,false,true,false,false,false,'pickaxe',2);
-P[BLOCK.EMERALD_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',2);
+P[BLOCK.EMERALD_ORE] = b(3,3,0,false,true,false,false,false,'pickaxe',3);
 P[BLOCK.EMERALD_BLOCK] = b(5,6,0,false,true,false,false,false,'pickaxe',2);
 P[BLOCK.LAPIS_BLOCK] = b(3,3,0,false,true,false,false,false,'pickaxe',1);
 P[BLOCK.REDSTONE_BLOCK] = b(5,6,0,false,true,false,false,false,'pickaxe',0);
@@ -255,21 +258,103 @@ export function getBlockProperties(blockId: number): BlockProperties {
   return P[blockId] ?? b(1,1,0,false,true,false,false,false,'none',0);
 }
 
-export function getMiningSpeed(blockId: number, _toolId: number, toolType: ToolType, toolTier: number): number {
+/**
+ * Wiki formula: https://minecraft.wiki/w/Breaking#Speed
+ * 
+ * speedMultiplier = baseToolSpeed + efficiency^2 + 1 (if correct tool)
+ *   then apply haste, fatigue, underwater, not-on-ground penalties
+ * damage = speedMultiplier / hardness
+ * if canHarvest: damage /= 30, else: damage /= 100
+ * if damage >= 1: instant break (0 ticks)
+ * ticks = ceil(1 / damage), seconds = ticks / 20
+ * 
+ * Status effect params have defaults of 0/false for callers that don't need them yet.
+ */
+export function getHarvestTime(
+  blockId: number,
+  toolId: number,
+  toolType: ToolType,
+  toolTier: number,
+  efficiencyLevel = 0,
+  hasteLevel = 0,
+  conduitPowerLevel = 0,
+  miningFatigueLevel = 0,
+  underwater = false,
+  hasAquaAffinity = false,
+  onGround = true
+): number {
   const props = getBlockProperties(blockId);
-  if (props.hardness < 0) return 0;
-  if (props.requiredTool === 'none' || props.requiredTool === toolType) {
-    const tierBonus = toolTier + 1;
-    return (toolType === 'none' ? 1 : tierBonus) / Math.max(props.hardness, 0.05);
+
+  // Unbreakable
+  if (props.hardness < 0) return Infinity;
+
+  // Instant break (hardness 0)
+  if (props.hardness === 0) return 0;
+
+  // === Determine base mining speed from tool item component ===
+  const isCorrectToolType = toolType !== 'none' && toolType === props.requiredTool;
+
+  let baseSpeed = 1;
+  if (isCorrectToolType) {
+    const itemProps = getItemProperties(toolId);
+    baseSpeed = itemProps?.miningSpeed ?? 1;
   }
-  return (toolTier + 1) * 0.3 / Math.max(props.hardness, 0.05);
+
+  // Efficiency — only applies with correct tool
+  if (efficiencyLevel > 0 && isCorrectToolType) {
+    baseSpeed += efficiencyLevel * efficiencyLevel + 1;
+  }
+
+  let speedMultiplier = baseSpeed;
+
+  // Haste / Conduit Power
+  const haste = Math.max(hasteLevel, conduitPowerLevel);
+  if (haste > 0) {
+    speedMultiplier *= 1 + 0.2 * haste;
+  }
+
+  // Mining Fatigue (Java Edition: hardcoded ×0.3 per level, capped at level IV)
+  for (let i = 0; i < Math.min(miningFatigueLevel, 4); i++) {
+    speedMultiplier *= 0.3;
+  }
+
+  // Underwater without Aqua Affinity: 5× penalty
+  if (underwater && !hasAquaAffinity) {
+    speedMultiplier /= 5;
+  }
+
+  // Not on ground: 5× penalty
+  if (!onGround) {
+    speedMultiplier /= 5;
+  }
+
+  // === Determine if the block can be harvested with current tool ===
+  // Pickaxe-required blocks need a pickaxe of sufficient tier to drop anything.
+  // Shovel/axe/hoe/shears blocks drop items even without the tool (tool only speeds up).
+  const canHarvest =
+    props.requiredTool !== 'pickaxe' ||
+    (toolType === 'pickaxe' && toolTier >= props.minToolTier);
+
+  // === Damage per tick ===
+  let damage = speedMultiplier / props.hardness;
+
+  if (canHarvest) {
+    damage /= 30;
+  } else {
+    damage /= 100;
+  }
+
+  // Instant break
+  if (damage >= 1) return 0;
+
+  // Convert to ticks (rounded up), then seconds
+  const ticks = Math.ceil(1 / damage);
+  return ticks / 20;
 }
 
-export function getHarvestTime(blockId: number, toolId: number, toolType: ToolType, toolTier: number): number {
-  const props = getBlockProperties(blockId);
-  if (props.hardness < 0) return Infinity;
-  if (props.hardness === 0) return 0;
-  const speed = getMiningSpeed(blockId, toolId, toolType, toolTier);
-  if (props.requiredTool !== 'none' && props.requiredTool !== toolType) return props.hardness * 1.5 / speed;
-  return props.hardness / speed;
+export function getMiningSpeed(blockId: number, toolId: number, toolType: ToolType, toolTier: number): number {
+  const harvestTime = getHarvestTime(blockId, toolId, toolType, toolTier);
+  if (harvestTime === 0) return Infinity;
+  if (harvestTime === Infinity) return 0;
+  return 1 / harvestTime;
 }

@@ -1813,6 +1813,11 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
           if (props.hardness < 0) return;
           const { toolType, toolTier, toolId } = getHeldToolType(player.selectedBlock);
           const harvestTime = getHarvestTime(blockId, toolId, toolType, toolTier);
+          // Instant break (hardness 0 or damage >= 1 per tick)
+          if (harvestTime === 0) {
+            breakBlock(bx, by, bz, blockId);
+            return;
+          }
           if (mining.active && mining.targetX === bx && mining.targetY === by && mining.targetZ === bz) {
             // progress handled by animate loop
           } else {

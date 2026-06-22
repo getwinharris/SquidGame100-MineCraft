@@ -126,6 +126,16 @@ Default section order:
 
 When the user requests a durable behavior change, record it here or in the relevant child AGENTS.md.
 
+### GitHub Remote Workflow (2026-06-22)
+
+**`origin/main` IS the GitHub remote.** Committing locally then pushing to `origin/main` lands code on the GitHub remote repository at `https://github.com/getwinharris/SquidGame100-MineCraft.git`.
+
+- `origin` = the remote repository on GitHub. `origin/main` = the main branch on GitHub.
+- `git push origin main` ships local commits to the remote GitHub repo.
+- Before pushing: run `npm run typecheck` and `npm run build` to verify.
+- After pushing: verify commits landed by checking `gh api repos/getwinharris/SquidGame100-MineCraft/commits`.
+- Do not confuse `origin/main` with a local-only concept — it is the actual remote on GitHub.
+
 ### Execution Standards (2026-06-22)
 
 **We ship working code.** Every agent implements, builds, and delivers. No skipped features documented as comments — if the scope says build it, build it.

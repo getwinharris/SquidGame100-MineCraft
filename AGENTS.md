@@ -290,4 +290,4 @@ The game must replicate Minecraft Java Edition mechanics exactly as documented o
   - `packages/client/AGENTS.md` — Vite/three.js browser client and web-game test hooks.
   - `packages/server/AGENTS.md` — authoritative Node/WebSocket server shell.
   - `packages/shared/AGENTS.md` — shared protocol, config, schemas, and deterministic utilities.
-  - `packages/docker/AGENTS.md` — Dockerfiles and reverse-proxy deployment assets.
+

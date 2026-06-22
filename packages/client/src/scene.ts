@@ -35,7 +35,7 @@ import {
   NearestFilter,
   SRGBColorSpace,
 } from 'three';
-import { BLOCK, getTextureUrl, getItemTextureFile, generateTappablesForChunk, rollTappableDrops, isTappableActive, TAPPABLE_DEFINITIONS, getBlockProperties, getHarvestTime, getItemProperties, ITEM, Inventory, SLOT, findRecipe, findFurnaceSmeltingRecipes, MOB_PROPERTIES, tickFluid, getFlowDirection, createsCobblestone, createsObsidian, createsStone, isWater, isLava } from '@sg100/shared';
+import { BLOCK, getTextureUrl, getItemTextureFile, generateTappablesForChunk, rollTappableDrops, isTappableActive, TAPPABLE_DEFINITIONS, getBlockProperties, getHarvestTime, getItemProperties, ITEM, Inventory, SLOT, findRecipe, findFurnaceSmeltingRecipes, MOB_PROPERTIES, tickFluid, getFlowDirection, createsCobblestone, createsObsidian, createsStone, isWater, isLava, createRng } from '@sg100/shared';
 import type { Tappable, ToolType, MobType, GameMode } from '@sg100/shared';
 import { placeAllLandmarks } from './landmarks.js';
 

@@ -16,7 +16,6 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm -w @sg100/shared run build && npm run typecheck --workspaces --if-present",
-    "dev:client": "npm -w @sg100/client run dev",
     "dev:server": "npm -w @sg100/server run dev",
     "generate:map": "node tools/generate-project-map.mjs"
   },

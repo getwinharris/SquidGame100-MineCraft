@@ -5,10 +5,13 @@
  * source of truth for room/match rules, and the client mirrors them for UI.
  */
 
-export const PROJECT_NAME = 'SquidGame100 MineCraft';
+export const PROJECT_NAME = 'MineCraft';
 
 /** Protocol version. Bump on any breaking change to message shapes. */
 export const PROTOCOL_VERSION = 1;
+
+/** Game mode: survival (full mechanics) or creative (flight, instant break). */
+export type GameMode = 'survival' | 'creative';
 
 /** Maximum concurrent players in a single room/match (the "100" in SquidGame100). */
 export const MAX_PLAYERS_PER_ROOM = 100;
@@ -24,7 +27,7 @@ export const SNAPSHOT_HZ = 20;
 
 /** Voxel/chunk constants. Shared so client & server agree on world geometry. */
 export const CHUNK_SIZE = 16;
-export const WORLD_HEIGHT = 64;
+export const WORLD_HEIGHT = 256;
 
 /** Default ports for local dev (overridable via env in each package). */
 export const DEFAULT_PORTS = {

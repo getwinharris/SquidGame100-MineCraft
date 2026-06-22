@@ -8,7 +8,7 @@ Owns the TypeScript workspaces that make up SquidGame100 MineCraft.
 
 - `client/` owns the browser runtime, visuals, input, and client network adapter.
 - `server/` owns authoritative HTTP/WebSocket runtime behavior.
-- `shared/` owns cross-package protocol, config, schemas, and deterministic utilities.
+- `shared/` owns cross-package protocol, config, schemas, and deterministic utilities (583+ blocks, 581+ items, mobs, crafting, fluids, weather, light engine).
 - `docker/` owns package-specific container images and reverse-proxy config.
 
 ## Local Contracts

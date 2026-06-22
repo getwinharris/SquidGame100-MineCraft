@@ -3,289 +3,623 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <meta name="description" content="SquidGame100 MineCraft — Squid Game Island in Minecraft voxel blocks." />
-    <meta name="theme-color" content="#0b1f3a" />
-    <title>SquidGame100 MineCraft</title>
+    <meta name="description" content="MineCraft — a browser voxel survival sandbox based on real Earth terrain." />
+    <meta name="theme-color" content="#78b9e8" />
+    <title>MineCraft</title>
     <style>
-      :root {
-        --sg-pink:  #ff2d6f;
-        --sg-green: #00a86b;
-        --sg-ink:   #0b1f3a;
-        --sg-gold:  #ffd700;
-        --sg-white: #ffffff;
-      }
+      @font-face { font-family: 'Minecraft'; src: url('https://minecraft.wiki/images/Minecraft_font.woff2') format('woff2'); }
+      :root { --panel: rgba(18, 20, 22, 0.82); }
       * { box-sizing: border-box; margin: 0; padding: 0; }
-      html, body { height: 100%; background: var(--sg-ink); overflow: hidden; }
-      #app { width: 100vw; height: 100vh; position: relative; }
-      #scene { width: 100%; height: 100%; display: block; }
+      html, body { width: 100%; height: 100%; overflow: hidden; background: #78b9e8; }
+      body { font-family: 'Minecraft', monospace; }
+      #app, #scene { width: 100%; height: 100%; }
+      #scene { display: block; image-rendering: pixelated; }
+      #phase-overlay { position: fixed; inset: 0; pointer-events: none; z-index: 2; }
+      #hud { position: fixed; inset: 0; z-index: 4; pointer-events: none; color: white; text-shadow: 2px 2px 0 #111; }
+      #game-hud { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); font-size: 15px; text-align: center; }
+      #status { position: absolute; top: 10px; left: 10px; padding: 7px 10px; border: 2px solid rgba(255,255,255,.16); border-radius: 3px; background: var(--panel); font-size: 11px; text-shadow: none; }
+      #status .ok { color: #75d96f; }
+      #status .err { color: #ff6b5f; }
+      #crosshair { position: absolute; top: 50%; left: 50%; width: 17px; height: 17px; transform: translate(-50%, -50%); display: none; mix-blend-mode: difference; }
+      #crosshair::before, #crosshair::after { content: ''; position: absolute; background: white; }
+      #crosshair::before { left: 50%; top: 0; width: 2px; height: 100%; transform: translateX(-50%); }
+      #crosshair::after { top: 50%; left: 0; width: 100%; height: 2px; transform: translateY(-50%); }
+      #combat-health { position: absolute; top: 52px; left: 50%; width: min(280px, 58vw); height: 11px; transform: translateX(-50%); border: 2px solid #151515; background: #383838; opacity: 0; transition: opacity 120ms; }
+      #combat-health.visible { opacity: 1; }
+      #combat-health::after { content: ''; display: block; height: 100%; width: var(--hp, 100%); background: #d3433e; transition: width 120ms; }
+      #survival-hud { position: absolute; bottom: 12px; left: 50%; width: min(540px, calc(100vw - 18px)); transform: translateX(-50%); }
+      #meters { display: flex; justify-content: space-between; height: 21px; margin: 0 5px 6px; }
+      .meter { display: flex; gap: 2px; }
+      .heart { width: 18px; font: 21px/18px Georgia, serif; color: #3a3a3a; filter: drop-shadow(1px 1px #111); }
+      .heart.full { color: #df3d37; }
+      .food { width: 16px; height: 16px; border: 2px solid #1b1b1b; border-radius: 60% 45% 55% 45%; background: #bf6b32; transform: rotate(-28deg) scale(.85); box-shadow: inset -3px -3px rgba(0,0,0,.22); }
+      #hotbar { display: grid; grid-template-columns: repeat(9, 1fr); gap: 2px; width: min(500px, 94vw); margin: auto; }
+      .hotbar-slot { position: relative; aspect-ratio: 1; display: grid; place-items: center; border: 3px solid #777; border-radius: 1px; background: rgba(28,28,28,.82); box-shadow: inset 0 0 0 2px #282828; }
+      .hotbar-slot.active { border-color: white; transform: translateY(-3px); }
+      .slot-num { position: absolute; top: 2px; left: 4px; font-size: 10px; }
+      .block-preview { width: 58%; aspect-ratio: 1; image-rendering: pixelated; box-shadow: inset -5px -5px rgba(0,0,0,.2), inset 4px 4px rgba(255,255,255,.12); }
+      @media (max-width: 620px) { #hotbar { gap: 1px; } .hotbar-slot { border-width: 2px; } .slot-num { font-size: 8px; } #survival-hud { bottom: 7px; } }
 
-      /* ── Phase flash overlay ── */
-      #phase-overlay {
-        position: fixed; inset: 0;
-        pointer-events: none;
-        transition: background 0.1s;
-        z-index: 1;
-      }
+      /* ═══ TITLE SCREEN ═══ */
+      #title-screen { position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: auto; transition: opacity 0.4s; gap: 2px; background: linear-gradient(180deg, rgba(54,108,160,0.45) 0%, rgba(30,60,90,0.55) 100%); }
+      #title-screen.hidden { opacity: 0; pointer-events: none; }
+      #title-logo { font-size: clamp(48px, 10vw, 100px); color: white; text-shadow: 4px 4px 0 #3f3f3f, -1px -1px 0 #3f3f3f; letter-spacing: 2px; margin-bottom: 16px; font-weight: bold; }
+      .title-splash { position: absolute; top: 16%; left: 56%; font-size: clamp(11px, 2.2vw, 20px); color: #fcdd39; text-shadow: 2px 2px 0 #8f6b00; transform: rotate(-15deg); font-weight: bold; }
+      .title-btn { width: min(340px, 80vw); padding: 8px 0; margin: 2px 0; border: 2px solid #1a1a2e; border-radius: 2px; background: #5a5a5a; color: white; font-size: clamp(13px, 2.2vw, 18px); font-family: inherit; cursor: pointer; text-shadow: 2px 2px 0 #1a1a2e; box-shadow: inset 0 -2px 0 #3a3a3a, inset 0 1px 0 #7a7a7a; transition: background 0.1s; }
+      .title-btn:hover { background: #6d6dff; }
+      .title-btn:active { background: #3a3a8a; box-shadow: inset 0 1px 0 #3a3a3a; transform: translateY(1px); }
+      .title-btn:disabled { background: #444; color: #888; cursor: not-allowed; }
+      .title-bottom-row { display: flex; gap: 4px; margin-top: 6px; align-items: center; }
+      .title-btn-sm { width: 40px; height: 36px; padding: 0; border: 2px solid #1a1a2e; border-radius: 2px; background: #5a5a5a; color: white; font-size: 18px; font-family: inherit; cursor: pointer; box-shadow: inset 0 -2px 0 #3a3a3a, inset 0 1px 0 #7a7a7a; display: grid; place-items: center; }
+      .title-btn-sm:hover { background: #6d6dff; }
+      .title-btn-sm:active { background: #3a3a8a; }
+      .title-btn-quit { position: fixed; bottom: 36px; right: 12px; padding: 6px 14px; border: 2px solid #1a1a2e; border-radius: 2px; background: #5a5a5a; color: white; font-size: 12px; font-family: inherit; cursor: pointer; text-shadow: 1px 1px 0 #1a1a2e; box-shadow: inset 0 -2px 0 #3a3a3a, inset 0 1px 0 #7a7a7a; }
+      .title-btn-quit:hover { background: #6d6dff; }
+      .title-btn-quit:active { background: #3a3a8a; }
+      #title-version { position: fixed; bottom: 8px; left: 12px; font-size: 11px; color: rgba(255,255,255,.6); text-shadow: 1px 1px 0 #111; }
+      #title-edition { position: fixed; bottom: 8px; right: 12px; font-size: 10px; color: rgba(255,255,255,.4); text-shadow: 1px 1px 0 #111; }
+      #title-copyright { position: fixed; bottom: 8px; left: 50%; transform: translateX(-50%); font-size: 11px; color: rgba(255,255,255,.4); text-shadow: 1px 1px 0 #111; white-space: nowrap; }
 
-      /* ── HUD ── */
-      #hud {
-        position: fixed; inset: 0;
-        pointer-events: none;
-        font-family: 'Courier New', Courier, monospace;
-        z-index: 10;
-      }
+      /* ═══ INVENTORY SCREEN ═══ */
+      #inventory-screen { position: fixed; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center; pointer-events: auto; background: rgba(0,0,0,0.65); }
+      #inventory-screen.open { display: flex; }
+      #crafting-table-screen { position: fixed; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center; pointer-events: auto; background: rgba(0,0,0,0.65); }
+      #crafting-table-screen.open { display: flex; }
+      #furnace-screen { position: fixed; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center; pointer-events: auto; background: rgba(0,0,0,0.65); }
+      #furnace-screen.open { display: flex; }
+      .inv-panel { background: #c6c6c6; border: 4px solid #2a2a2a; border-radius: 2px; padding: 8px; box-shadow: 8px 8px 0 rgba(0,0,0,.4); }
+      .inv-title { text-align: center; font-size: 16px; color: #404040; margin-bottom: 6px; text-shadow: 1px 1px 0 #bbb; }
+      .inv-grid { display: grid; gap: 2px; }
+      .inv-slot { width: 40px; height: 40px; background: #8b8b8b; border: 2px solid #373737; border-top-color: #b5b5b5; border-left-color: #b5b5b5; display: grid; place-items: center; position: relative; }
+      .inv-slot:hover { border-color: #ffffff; }
+      .inv-slot .slot-count { position: absolute; bottom: 1px; right: 3px; font-size: 10px; color: white; text-shadow: 1px 1px 0 #111; }
+      .inv-slot .slot-item { width: 32px; height: 32px; image-rendering: pixelated; background-size: contain; background-repeat: no-repeat; background-position: center; }
+      .inv-hotbar { display: grid; grid-template-columns: repeat(9, 1fr); gap: 2px; margin-top: 4px; }
+      .inv-player-model { display: flex; align-items: center; justify-content: center; margin-bottom: 8px; }
+      .inv-player-model canvas { image-rendering: pixelated; }
+      .inv-armor { display: grid; grid-template-rows: repeat(4, 1fr); gap: 2px; }
+      .inv-crafting { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px; }
+      .inv-crafting-3x3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
+      .craft-arrow { font-size: 20px; color: #404040; margin: 0 4px; }
+      .inv-crafting-output { width: 40px; height: 40px; background: #8b8b8b; border: 2px solid #373737; border-top-color: #b5b5b5; border-left-color: #b5b5b5; display: grid; place-items: center; margin-left: 12px; }
+      .inv-close { position: absolute; top: 4px; right: 8px; background: none; border: none; font-size: 18px; color: #404040; cursor: pointer; font-family: inherit; }
+      .inv-recipe-book { position: absolute; top: 4px; left: 8px; width: 28px; height: 28px; background: #c6c6c6; border: 2px solid #373737; border-radius: 2px; display: grid; place-items: center; cursor: pointer; font-size: 16px; }
+      .inv-recipe-book:hover { background: #ddd; }
 
-      /* Game status panel */
-      #game-hud {
-        position: absolute; top: 14px; left: 50%;
-        transform: translateX(-50%);
-        background: rgba(11,31,58,0.82);
-        border: 2px solid var(--sg-pink);
-        border-radius: 8px;
-        padding: 10px 22px;
-        font-size: 15px; line-height: 1.7;
-        text-align: center;
-        color: #fff;
-        text-shadow: 0 1px 4px rgba(0,0,0,0.9);
-        min-width: 300px;
-        max-width: 480px;
-      }
-      #game-hud .pink  { color: var(--sg-pink); }
-      #game-hud .green { color: var(--sg-green); }
-      #game-hud .gold  { color: var(--sg-gold); }
-      #game-hud .white { color: #fff; }
-
-      /* Network status */
-      #status {
-        position: absolute; top: 14px; right: 14px;
-        background: rgba(11,31,58,0.7);
-        border: 1px solid rgba(255,255,255,0.1);
-        border-radius: 6px;
-        padding: 6px 12px;
-        font-size: 12px; color: #aaa;
-      }
-      #status .ok  { color: var(--sg-green); }
-      #status .err { color: var(--sg-pink); }
-
-      /* Controls legend */
-      #controls {
-        position: absolute; bottom: 14px; left: 14px;
-        background: rgba(11,31,58,0.7);
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 6px;
-        padding: 8px 14px;
-        font-size: 12px; color: #ccc; line-height: 1.8;
-      }
-      #controls kbd {
-        display: inline-block;
-        background: rgba(255,255,255,0.15);
-        border: 1px solid rgba(255,255,255,0.3);
-        border-radius: 3px;
-        padding: 1px 5px;
-        font-size: 11px;
-        color: #fff;
-      }
-
-      /* Health bar */
-      #health-bar-wrap {
-        position: absolute; bottom: 14px; right: 14px;
-        background: rgba(11,31,58,0.8);
-        border: 1px solid var(--sg-pink);
-        border-radius: 6px; padding: 8px 14px; min-width: 160px;
-      }
-      #health-bar-wrap label { font-size: 11px; color: #aaa; display: block; margin-bottom: 4px; }
-      #health-bar {
-        height: 8px; background: #1a2a3a; border-radius: 4px; overflow: hidden;
-      }
-      #health-fill {
-        height: 100%; width: 100%;
-        background: linear-gradient(90deg, var(--sg-green), #00ff88);
-        border-radius: 4px;
-        transition: width 0.3s, background 0.3s;
-      }
-
-      /* Hotbar container */
-      #hotbar {
-        position: absolute;
-        bottom: 14px;
-        left: 50%;
-        transform: translateX(-50%);
-        display: flex;
-        gap: 6px;
-        background: rgba(11, 31, 58, 0.85);
-        border: 2px solid rgba(255, 255, 255, 0.15);
-        border-radius: 8px;
-        padding: 6px;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-        backdrop-filter: blur(8px);
-        pointer-events: auto;
-      }
-      .hotbar-slot {
-        position: relative;
-        width: 46px;
-        height: 46px;
-        background: rgba(255, 255, 255, 0.05);
-        border: 2px solid transparent;
-        border-radius: 6px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: background 0.15s, border-color 0.15s, transform 0.1s;
-      }
-      .hotbar-slot:hover {
-        background: rgba(255, 255, 255, 0.12);
-        transform: scale(1.05);
-      }
-      .hotbar-slot.active {
-        border-color: var(--sg-pink);
-        background: rgba(255, 45, 111, 0.15);
-        box-shadow: 0 0 10px rgba(255, 45, 111, 0.3);
-      }
-      .slot-num {
-        position: absolute;
-        top: 2px;
-        left: 4px;
-        font-size: 9px;
-        color: rgba(255, 255, 255, 0.5);
-        font-weight: bold;
-      }
-      .block-preview {
-        width: 24px;
-        height: 24px;
-        background-color: var(--block-color);
-        border-radius: 4px;
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        box-shadow: inset 0 0 6px rgba(0,0,0,0.3);
-      }
-
-      /* Crosshair */
-      #crosshair {
-        position: absolute; top: 50%; left: 50%;
-        transform: translate(-50%,-50%);
-        width: 20px; height: 20px;
-        display: none; /* shown after pointer lock */
-        pointer-events: none;
-      }
-      #crosshair::before, #crosshair::after {
-        content: ''; position: absolute; background: rgba(255,255,255,0.85);
-      }
-      #crosshair::before { left:50%; top:0; width:2px; height:100%; transform:translateX(-50%); }
-      #crosshair::after  { top:50%; left:0; width:100%; height:2px; transform:translateY(-50%); }
-
-      /* Click to play overlay */
-      #click-to-play {
-        position: absolute; inset: 0;
-        display: flex; flex-direction: column;
-        align-items: center; justify-content: center;
-        background: rgba(11,31,58,0.88);
-        cursor: pointer; z-index: 20;
-        transition: opacity 0.4s;
-      }
-      #click-to-play h1 {
-        font-size: clamp(28px,6vw,64px);
-        color: #fff; letter-spacing: 3px; margin-bottom: 12px;
-      }
-      #click-to-play h1 .accent { color: var(--sg-pink); }
-      #click-to-play p {
-        color: #ccc; font-size: 15px; margin-bottom: 6px;
-      }
-      #click-to-play .hint {
-        margin-top: 18px;
-        color: var(--sg-gold);
-        font-size: 18px;
-        animation: pulse 1.5s ease-in-out infinite;
-      }
-      @keyframes pulse {
-        0%,100% { opacity: 1; }
-        50%      { opacity: 0.4; }
-      }
-
-      /* Squid game symbols */
-      .sg-symbols {
-        display: flex; gap: 20px; margin: 16px 0;
-        font-size: 36px;
-      }
+      /* ═══ SETTINGS SCREEN ═══ */
+      #settings-screen { position: fixed; inset: 0; z-index: 25; display: none; align-items: center; justify-content: center; pointer-events: auto; background: rgba(0,0,0,0.65); }
+      #settings-screen.open { display: flex; }
+      .settings-panel { background: #c6c6c6; border: 4px solid #2a2a2a; border-radius: 2px; padding: 16px 24px; box-shadow: 8px 8px 0 rgba(0,0,0,.4); min-width: min(420px, 85vw); position: relative; max-height: 90vh; overflow-y: auto; }
+      .settings-sub-menu { background: #c6c6c6; border: 4px solid #2a2a2a; border-radius: 2px; padding: 16px 24px; box-shadow: 8px 8px 0 rgba(0,0,0,.4); min-width: min(420px, 85vw); max-height: 90vh; overflow-y: auto; }
+      .settings-title { text-align: center; font-size: 18px; color: #404040; margin-bottom: 12px; text-shadow: 1px 1px 0 #bbb; }
+      .settings-row { display: flex; align-items: center; justify-content: space-between; margin: 6px 0; }
+      .settings-row label { font-size: 13px; color: #404040; text-shadow: 1px 1px 0 #ddd; flex-shrink: 0; }
+      .settings-btn { padding: 6px 16px; border: 2px solid #373737; border-top-color: #b5b5b5; border-left-color: #b5b5b5; background: #7a7a7a; color: white; font-size: 12px; font-family: inherit; cursor: pointer; text-shadow: 1px 1px 0 #111; min-width: 120px; }
+      .settings-btn:hover { background: #8a8aff; }
+      .settings-btn:active { background: #5a5a8a; border-top-color: #373737; border-left-color: #373737; border-bottom-color: #b5b5b5; border-right-color: #b5b5b5; }
+      .settings-slider { -webkit-appearance: none; appearance: none; width: 140px; height: 8px; background: #373737; border-radius: 0; outline: none; }
+      .settings-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 12px; height: 20px; background: #b5b5b5; border: 2px solid #373737; border-top-color: #e8e8e8; border-left-color: #e8e8e8; cursor: pointer; }
+      .settings-done { width: 100%; padding: 10px 0; margin-top: 14px; border: 3px solid #1a1a2e; border-radius: 2px; background: #5a5a5a; color: white; font-size: 16px; font-family: inherit; cursor: pointer; text-shadow: 2px 2px 0 #1a1a2e; box-shadow: inset 0 -3px 0 #3a3a3a, inset 0 2px 0 #7a7a7a; }
+      .settings-done:hover { background: #6d6dff; }
+      .settings-done:active { background: #3a3a8a; }
+      .settings-sub { font-size: 11px; color: #666; text-shadow: 1px 1px 0 #ddd; }
+      .settings-sub-menu { position: absolute; inset: 0; }
     </style>
   </head>
   <body>
-    <div id="app">
-      <canvas id="scene"></canvas>
-    </div>
-
-    <!-- Phase color overlay -->
+    <div id="app"><canvas id="scene"></canvas></div>
     <div id="phase-overlay"></div>
-
-    <!-- HUD -->
     <div id="hud">
-      <div id="game-hud">Loading Squid Game Island…</div>
-      <div id="status">connecting…</div>
+      <div id="game-hud"></div>
+      <div id="status">connecting...</div>
       <div id="crosshair"></div>
-      <div id="controls">
-        <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move &nbsp;
-        <kbd>SPACE</kbd> Jump &nbsp;
-        <kbd>SHIFT</kbd> Sprint<br>
-        <kbd>Mouse</kbd> Look &nbsp;
-        <kbd>R</kbd> Respawn after elimination
-      </div>
-      <div id="health-bar-wrap">
-        <label>HEALTH</label>
-        <div id="health-bar"><div id="health-fill"></div></div>
-      </div>
-
-      <!-- Hotbar -->
-      <div id="hotbar">
-        <div class="hotbar-slot active" id="slot-0" title="Stone" style="--block-color: #777788;"><span class="slot-num">1</span><div class="block-preview"></div></div>
-        <div class="hotbar-slot" id="slot-1" title="Grass" style="--block-color: #00a86b;"><span class="slot-num">2</span><div class="block-preview"></div></div>
-        <div class="hotbar-slot" id="slot-2" title="Sand" style="--block-color: #c8b560;"><span class="slot-num">3</span><div class="block-preview"></div></div>
-        <div class="hotbar-slot" id="slot-3" title="Wood" style="--block-color: #8b6914;"><span class="slot-num">4</span><div class="block-preview"></div></div>
-        <div class="hotbar-slot" id="slot-4" title="Pink Wall" style="--block-color: #ff2d6f;"><span class="slot-num">5</span><div class="block-preview"></div></div>
-        <div class="hotbar-slot" id="slot-5" title="Concrete" style="--block-color: #aaaaaa;"><span class="slot-num">6</span><div class="block-preview"></div></div>
-        <div class="hotbar-slot" id="slot-6" title="Gold" style="--block-color: #ffd700;"><span class="slot-num">7</span><div class="block-preview"></div></div>
-        <div class="hotbar-slot" id="slot-7" title="Glass" style="--block-color: rgba(136,204,255,0.6);"><span class="slot-num">8</span><div class="block-preview"></div></div>
-        <div class="hotbar-slot" id="slot-8" title="Black" style="--block-color: #111111;"><span class="slot-num">9</span><div class="block-preview"></div></div>
+      <div id="combat-health"></div>
+      <div id="survival-hud">
+        <div id="xp-bar" style="width:100%;height:5px;background:#1a1a1a;margin-bottom:2px;border:1px solid #333;">
+          <div id="xp-fill" style="height:100%;width:0%;background:#83ff55;transition:width 0.3s;"></div>
+        </div>
+        <div id="xp-level" style="text-align:center;font-size:12px;color:#83ff55;text-shadow:1px 1px 0 #111;margin-bottom:2px;">0</div>
+        <div id="meters"><div id="health" class="meter"></div><div id="hunger" class="meter"></div></div>
+        <div id="hotbar">
+          <div class="hotbar-slot active" id="slot-0"><span class="slot-num">1</span><div class="block-preview"></div></div>
+          <div class="hotbar-slot" id="slot-1"><span class="slot-num">2</span><div class="block-preview"></div></div>
+          <div class="hotbar-slot" id="slot-2"><span class="slot-num">3</span><div class="block-preview"></div></div>
+          <div class="hotbar-slot" id="slot-3"><span class="slot-num">4</span><div class="block-preview"></div></div>
+          <div class="hotbar-slot" id="slot-4"><span class="slot-num">5</span><div class="block-preview"></div></div>
+          <div class="hotbar-slot" id="slot-5"><span class="slot-num">6</span><div class="block-preview"></div></div>
+          <div class="hotbar-slot" id="slot-6"><span class="slot-num">7</span><div class="block-preview"></div></div>
+          <div class="hotbar-slot" id="slot-7"><span class="slot-num">8</span><div class="block-preview"></div></div>
+          <div class="hotbar-slot" id="slot-8"><span class="slot-num">9</span><div class="block-preview"></div></div>
+        </div>
       </div>
     </div>
 
-    <!-- Click to play screen -->
-    <div id="click-to-play">
-      <h1>Squid<span class="accent">Game</span>100<br><span class="accent">Mine</span>Craft</h1>
-      <div class="sg-symbols">▲ ○ △</div>
-      <p>Squid Game Island — Minecraft Voxel Edition</p>
-      <p style="color:#aaa; font-size:13px;">Red Light, Green Light · Glass Bridge · Prize Vault</p>
-      <div class="hint">▶ CLICK TO PLAY</div>
+    <!-- ═══ TITLE SCREEN ═══ -->
+    <div id="title-screen">
+      <div class="title-splash" id="splash-text">Also try Terraria!</div>
+      <div id="title-logo">MINECRAFT</div>
+      <button class="title-btn" id="btn-singleplayer" type="button">Singleplayer</button>
+      <button class="title-btn" id="btn-multiplayer" type="button">Multiplayer</button>
+      <button class="title-btn" id="btn-realms" type="button">Minecraft Realms</button>
+      <div class="title-bottom-row">
+        <button class="title-btn-sm" id="btn-language" type="button" title="Language">🌐</button>
+        <button class="title-btn" id="btn-options" type="button">Options...</button>
+        <button class="title-btn-sm" id="btn-accessibility" type="button" title="Accessibility Settings">♿</button>
+        <button class="title-btn-sm" id="btn-friends" type="button" title="Friends">👥</button>
+      </div>
+      <button class="title-btn-quit" id="btn-quit" type="button">Quit Game</button>
+      <div id="title-copyright">Copyright Mojang AB</div>
+      <div id="title-version">v0.1.0</div>
+      <div id="title-edition">Java Edition</div>
+    </div>
+
+    <!-- ═══ INVENTORY SCREEN ═══ -->
+    <div id="inventory-screen">
+      <div class="inv-panel" style="position:relative;">
+        <button class="inv-close" id="inv-close" type="button">✕</button>
+        <button class="inv-recipe-book" id="inv-recipe-book" type="button" title="Recipe Book">📖</button>
+        <div class="inv-title">Crafting</div>
+        <div style="display:flex;gap:8px;align-items:flex-start;">
+          <!-- Armor slots (column) -->
+          <div style="display:flex;flex-direction:column;gap:2px;">
+            <div class="inv-slot" data-slot="armor-helmet" title="Helmet">
+              <svg viewBox="0 0 16 16" width="28" height="28" style="opacity:0.35"><rect x="3" y="2" width="10" height="5" rx="1" fill="#888"/><rect x="2" y="7" width="12" height="3" rx="1" fill="#888"/></svg>
+            </div>
+            <div class="inv-slot" data-slot="armor-chest" title="Chestplate">
+              <svg viewBox="0 0 16 16" width="28" height="28" style="opacity:0.35"><rect x="3" y="1" width="10" height="10" rx="1" fill="#888"/><rect x="1" y="3" width="3" height="7" rx="1" fill="#888"/><rect x="12" y="3" width="3" height="7" rx="1" fill="#888"/></svg>
+            </div>
+            <div class="inv-slot" data-slot="armor-legs" title="Leggings">
+              <svg viewBox="0 0 16 16" width="28" height="28" style="opacity:0.35"><rect x="2" y="1" width="12" height="4" rx="1" fill="#888"/><rect x="2" y="5" width="5" height="9" rx="1" fill="#888"/><rect x="9" y="5" width="5" height="9" rx="1" fill="#888"/></svg>
+            </div>
+            <div class="inv-slot" data-slot="armor-boots" title="Boots">
+              <svg viewBox="0 0 16 16" width="28" height="28" style="opacity:0.35"><rect x="2" y="3" width="5" height="8" rx="1" fill="#888"/><rect x="9" y="3" width="5" height="8" rx="1" fill="#888"/><rect x="1" y="11" width="6" height="3" rx="1" fill="#888"/><rect x="9" y="11" width="6" height="3" rx="1" fill="#888"/></svg>
+            </div>
+            <!-- Off-hand below armor -->
+            <div class="inv-slot" data-slot="offhand" title="Off-hand" style="margin-top:4px;">
+              <svg viewBox="0 0 16 16" width="28" height="28" style="opacity:0.35"><rect x="4" y="1" width="8" height="12" rx="2" fill="#888"/><rect x="6" y="12" width="4" height="3" fill="#888"/></svg>
+            </div>
+          </div>
+          <!-- Player model + crafting -->
+          <div style="display:flex;flex-direction:column;align-items:center;">
+            <canvas id="inv-player-model" width="80" height="100" style="image-rendering:pixelated;"></canvas>
+            <div style="display:flex;align-items:center;gap:4px;margin-top:4px;">
+              <div class="inv-crafting">
+                <div class="inv-slot" data-slot="craft-0"></div>
+                <div class="inv-slot" data-slot="craft-1"></div>
+                <div class="inv-slot" data-slot="craft-2"></div>
+                <div class="inv-slot" data-slot="craft-3"></div>
+              </div>
+              <div class="craft-arrow">➜</div>
+              <div class="inv-slot" data-slot="craft-out" style="width:44px;height:44px;"></div>
+            </div>
+          </div>
+        </div>
+        <div style="border-top:2px solid #555;margin-top:6px;padding-top:6px;">
+          <div class="inv-grid" style="grid-template-columns:repeat(9,1fr);">
+            <div class="inv-slot" data-slot="storage-0"></div><div class="inv-slot" data-slot="storage-1"></div><div class="inv-slot" data-slot="storage-2"></div><div class="inv-slot" data-slot="storage-3"></div><div class="inv-slot" data-slot="storage-4"></div><div class="inv-slot" data-slot="storage-5"></div><div class="inv-slot" data-slot="storage-6"></div><div class="inv-slot" data-slot="storage-7"></div><div class="inv-slot" data-slot="storage-8"></div>
+            <div class="inv-slot" data-slot="storage-9"></div><div class="inv-slot" data-slot="storage-10"></div><div class="inv-slot" data-slot="storage-11"></div><div class="inv-slot" data-slot="storage-12"></div><div class="inv-slot" data-slot="storage-13"></div><div class="inv-slot" data-slot="storage-14"></div><div class="inv-slot" data-slot="storage-15"></div><div class="inv-slot" data-slot="storage-16"></div><div class="inv-slot" data-slot="storage-17"></div>
+            <div class="inv-slot" data-slot="storage-18"></div><div class="inv-slot" data-slot="storage-19"></div><div class="inv-slot" data-slot="storage-20"></div><div class="inv-slot" data-slot="storage-21"></div><div class="inv-slot" data-slot="storage-22"></div><div class="inv-slot" data-slot="storage-23"></div><div class="inv-slot" data-slot="storage-24"></div><div class="inv-slot" data-slot="storage-25"></div><div class="inv-slot" data-slot="storage-26"></div>
+          </div>
+          <div class="inv-hotbar">
+            <div class="inv-slot" data-slot="hotbar-0"></div><div class="inv-slot" data-slot="hotbar-1"></div><div class="inv-slot" data-slot="hotbar-2"></div><div class="inv-slot" data-slot="hotbar-3"></div><div class="inv-slot" data-slot="hotbar-4"></div><div class="inv-slot" data-slot="hotbar-5"></div><div class="inv-slot" data-slot="hotbar-6"></div><div class="inv-slot" data-slot="hotbar-7"></div><div class="inv-slot" data-slot="hotbar-8"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ CRAFTING TABLE SCREEN ═══ -->
+    <div id="crafting-table-screen">
+      <div class="inv-panel" style="position:relative;">
+        <button class="inv-close" id="crafting-table-close" type="button">✕</button>
+        <div class="inv-title">Crafting</div>
+        <div style="display:flex;align-items:center;gap:8px;justify-content:center;margin-bottom:8px;">
+          <div class="inv-crafting-3x3">
+            <div class="inv-slot" data-slot="table-0"></div>
+            <div class="inv-slot" data-slot="table-1"></div>
+            <div class="inv-slot" data-slot="table-2"></div>
+            <div class="inv-slot" data-slot="table-3"></div>
+            <div class="inv-slot" data-slot="table-4"></div>
+            <div class="inv-slot" data-slot="table-5"></div>
+            <div class="inv-slot" data-slot="table-6"></div>
+            <div class="inv-slot" data-slot="table-7"></div>
+            <div class="inv-slot" data-slot="table-8"></div>
+          </div>
+          <div class="craft-arrow">➜</div>
+          <div class="inv-slot" data-slot="table-out" style="width:48px;height:48px;"></div>
+        </div>
+        <div style="border-top:2px solid #555;margin-top:6px;padding-top:6px;">
+          <div class="inv-grid" style="grid-template-columns:repeat(9,1fr);">
+            <div class="inv-slot" data-slot="storage-0"></div><div class="inv-slot" data-slot="storage-1"></div><div class="inv-slot" data-slot="storage-2"></div><div class="inv-slot" data-slot="storage-3"></div><div class="inv-slot" data-slot="storage-4"></div><div class="inv-slot" data-slot="storage-5"></div><div class="inv-slot" data-slot="storage-6"></div><div class="inv-slot" data-slot="storage-7"></div><div class="inv-slot" data-slot="storage-8"></div>
+            <div class="inv-slot" data-slot="storage-9"></div><div class="inv-slot" data-slot="storage-10"></div><div class="inv-slot" data-slot="storage-11"></div><div class="inv-slot" data-slot="storage-12"></div><div class="inv-slot" data-slot="storage-13"></div><div class="inv-slot" data-slot="storage-14"></div><div class="inv-slot" data-slot="storage-15"></div><div class="inv-slot" data-slot="storage-16"></div><div class="inv-slot" data-slot="storage-17"></div>
+            <div class="inv-slot" data-slot="storage-18"></div><div class="inv-slot" data-slot="storage-19"></div><div class="inv-slot" data-slot="storage-20"></div><div class="inv-slot" data-slot="storage-21"></div><div class="inv-slot" data-slot="storage-22"></div><div class="inv-slot" data-slot="storage-23"></div><div class="inv-slot" data-slot="storage-24"></div><div class="inv-slot" data-slot="storage-25"></div><div class="inv-slot" data-slot="storage-26"></div>
+          </div>
+          <div class="inv-hotbar">
+            <div class="inv-slot" data-slot="hotbar-0"></div><div class="inv-slot" data-slot="hotbar-1"></div><div class="inv-slot" data-slot="hotbar-2"></div><div class="inv-slot" data-slot="hotbar-3"></div><div class="inv-slot" data-slot="hotbar-4"></div><div class="inv-slot" data-slot="hotbar-5"></div><div class="inv-slot" data-slot="hotbar-6"></div><div class="inv-slot" data-slot="hotbar-7"></div><div class="inv-slot" data-slot="hotbar-8"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ FURNACE SCREEN ═══ -->
+    <div id="furnace-screen">
+      <div class="inv-panel" style="position:relative;">
+        <button class="inv-close" id="furnace-close" type="button">✕</button>
+        <div class="inv-title">Furnace</div>
+        <div style="display:flex;align-items:center;gap:8px;justify-content:center;margin-bottom:8px;">
+          <div class="inv-slot" data-slot="furnace-in" title="Input" style="width:48px;height:48px;"></div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
+            <div id="furnace-arrow" style="font-size:24px;color:#404040;">➜</div>
+            <div id="furnace-flame" style="font-size:20px;color:#ff6600;">🔥</div>
+          </div>
+          <div class="inv-slot" data-slot="furnace-out" title="Output" style="width:48px;height:48px;"></div>
+          <div style="margin-left:8px;">
+            <div class="inv-slot" data-slot="furnace-fuel" title="Fuel" style="width:48px;height:48px;"></div>
+          </div>
+        </div>
+        <div style="border-top:2px solid #555;margin-top:6px;padding-top:6px;">
+          <div class="inv-grid" style="grid-template-columns:repeat(9,1fr);">
+            <div class="inv-slot" data-slot="storage-0"></div><div class="inv-slot" data-slot="storage-1"></div><div class="inv-slot" data-slot="storage-2"></div><div class="inv-slot" data-slot="storage-3"></div><div class="inv-slot" data-slot="storage-4"></div><div class="inv-slot" data-slot="storage-5"></div><div class="inv-slot" data-slot="storage-6"></div><div class="inv-slot" data-slot="storage-7"></div><div class="inv-slot" data-slot="storage-8"></div>
+            <div class="inv-slot" data-slot="storage-9"></div><div class="inv-slot" data-slot="storage-10"></div><div class="inv-slot" data-slot="storage-11"></div><div class="inv-slot" data-slot="storage-12"></div><div class="inv-slot" data-slot="storage-13"></div><div class="inv-slot" data-slot="storage-14"></div><div class="inv-slot" data-slot="storage-15"></div><div class="inv-slot" data-slot="storage-16"></div><div class="inv-slot" data-slot="storage-17"></div>
+            <div class="inv-slot" data-slot="storage-18"></div><div class="inv-slot" data-slot="storage-19"></div><div class="inv-slot" data-slot="storage-20"></div><div class="inv-slot" data-slot="storage-21"></div><div class="inv-slot" data-slot="storage-22"></div><div class="inv-slot" data-slot="storage-23"></div><div class="inv-slot" data-slot="storage-24"></div><div class="inv-slot" data-slot="storage-25"></div><div class="inv-slot" data-slot="storage-26"></div>
+          </div>
+          <div class="inv-hotbar">
+            <div class="inv-slot" data-slot="hotbar-0"></div><div class="inv-slot" data-slot="hotbar-1"></div><div class="inv-slot" data-slot="hotbar-2"></div><div class="inv-slot" data-slot="hotbar-3"></div><div class="inv-slot" data-slot="hotbar-4"></div><div class="inv-slot" data-slot="hotbar-5"></div><div class="inv-slot" data-slot="hotbar-6"></div><div class="inv-slot" data-slot="hotbar-7"></div><div class="inv-slot" data-slot="hotbar-8"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ PAUSE MENU ═══ -->
+    <div id="pause-menu" style="position:fixed;inset:0;z-index:25;display:none;align-items:center;justify-content:center;pointer-events:auto;background:rgba(0,0,0,0.65);">
+      <div style="background:#c6c6c6;border:4px solid #2a2a2a;border-radius:2px;padding:16px 24px;box-shadow:8px 8px 0 rgba(0,0,0,.4);min-width:min(320px,80vw);text-align:center;">
+        <div style="font-size:18px;color:#404040;margin-bottom:16px;text-shadow:1px 1px 0 #bbb;">Game Paused</div>
+        <button class="settings-btn" id="pause-back" type="button" style="width:100%;margin-bottom:6px;">Back to Game</button>
+        <button class="settings-btn" id="pause-options" type="button" style="width:100%;margin-bottom:6px;">Options...</button>
+        <button class="settings-btn" id="pause-disconnect" type="button" style="width:100%;">Save and Quit to Title</button>
+      </div>
+    </div>
+
+    <!-- ═══ DEATH SCREEN ═══ -->
+    <div id="death-screen" style="position:fixed;inset:0;z-index:30;display:none;align-items:center;justify-content:center;pointer-events:auto;background:rgba(200,0,0,0.65);">
+      <div style="text-align:center;color:white;text-shadow:2px 2px 0 #111;">
+        <div style="font-size:clamp(36px,8vw,72px);margin-bottom:24px;">You Died!</div>
+        <button class="title-btn" id="death-respawn" type="button">Respawn</button>
+        <button class="title-btn" id="death-title" type="button" style="margin-top:6px;">Title Screen</button>
+      </div>
+    </div>
+
+    <!-- ═══ SETTINGS SCREEN ═══ -->
+    <div id="settings-screen">
+      <div class="settings-panel" id="settings-main">
+        <div class="settings-title">Options</div>
+        <div class="settings-row">
+          <label>FOV:</label>
+          <input type="range" class="settings-slider" id="opt-fov" min="30" max="110" value="70">
+          <span class="settings-sub" id="opt-fov-val">70</span>
+        </div>
+        <div class="settings-row">
+          <label>Difficulty:</label>
+          <button class="settings-btn" id="opt-difficulty">Normal</button>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:8px;">
+          <button class="settings-btn" id="btn-music-sounds">Music & Sounds</button>
+          <button class="settings-btn" id="btn-video-settings">Video Settings</button>
+          <button class="settings-btn" id="btn-controls">Controls</button>
+          <button class="settings-btn" id="btn-language-settings">Language</button>
+          <button class="settings-btn" id="btn-chat-settings">Chat Settings</button>
+          <button class="settings-btn" id="btn-skin-settings">Skin Customization</button>
+          <button class="settings-btn" id="btn-resource-packs">Resource Packs</button>
+          <button class="settings-btn" id="btn-accessibility-settings">Accessibility Settings</button>
+        </div>
+        <button class="settings-done" id="settings-done" type="button">Done</button>
+      </div>
+
+      <!-- Music & Sounds sub-menu -->
+      <div class="settings-panel settings-sub-menu" id="settings-music" style="display:none;">
+        <div class="settings-title">Music & Sounds</div>
+        <div class="settings-row"><label>Master Volume:</label><input type="range" class="settings-slider" id="opt-master" min="0" max="100" value="100"><span class="settings-sub" id="opt-master-val">100%</span></div>
+        <div class="settings-row"><label>Music:</label><input type="range" class="settings-slider" id="opt-music" min="0" max="100" value="50"><span class="settings-sub" id="opt-music-val">50%</span></div>
+        <div class="settings-row"><label>Weather:</label><input type="range" class="settings-slider" id="opt-weather" min="0" max="100" value="100"><span class="settings-sub" id="opt-weather-val">100%</span></div>
+        <div class="settings-row"><label>Blocks:</label><input type="range" class="settings-slider" id="opt-blocks-vol" min="0" max="100" value="100"><span class="settings-sub" id="opt-blocks-vol-val">100%</span></div>
+        <div class="settings-row"><label>Hostile Mobs:</label><input type="range" class="settings-slider" id="opt-hostile" min="0" max="100" value="100"><span class="settings-sub" id="opt-hostile-val">100%</span></div>
+        <div class="settings-row"><label>Friendly Mobs:</label><input type="range" class="settings-slider" id="opt-friendly" min="0" max="100" value="100"><span class="settings-sub" id="opt-friendly-val">100%</span></div>
+        <div class="settings-row"><label>Players:</label><input type="range" class="settings-slider" id="opt-players" min="0" max="100" value="100"><span class="settings-sub" id="opt-players-val">100%</span></div>
+        <div class="settings-row"><label>Ambient:</label><input type="range" class="settings-slider" id="opt-ambient" min="0" max="100" value="100"><span class="settings-sub" id="opt-ambient-val">100%</span></div>
+        <div class="settings-row"><label>UI:</label><input type="range" class="settings-slider" id="opt-ui-vol" min="0" max="100" value="100"><span class="settings-sub" id="opt-ui-vol-val">100%</span></div>
+        <button class="settings-done" id="music-done" type="button">Done</button>
+      </div>
+
+      <!-- Video Settings sub-menu -->
+      <div class="settings-panel settings-sub-menu" id="settings-video" style="display:none;">
+        <div class="settings-title">Video Settings</div>
+        <div class="settings-row"><label>Graphics:</label><button class="settings-btn" id="opt-graphics">Fancy</button></div>
+        <div class="settings-row"><label>Render Distance:</label><button class="settings-btn" id="opt-render">8 chunks</button></div>
+        <div class="settings-row"><label>Max Framerate:</label><button class="settings-btn" id="opt-framerate">120 fps</button></div>
+        <div class="settings-row"><label>VSync:</label><button class="settings-btn" id="opt-vsync">ON</button></div>
+        <div class="settings-row"><label>GUI Scale:</label><button class="settings-btn" id="opt-guiscale">Auto</button></div>
+        <div class="settings-row"><label>Brightness:</label><input type="range" class="settings-slider" id="opt-brightness" min="0" max="100" value="50"><span class="settings-sub" id="opt-brightness-val">50</span></div>
+        <div class="settings-row"><label>Clouds:</label><button class="settings-btn" id="opt-clouds">Fast</button></div>
+        <div class="settings-row"><label>Particles:</label><button class="settings-btn" id="opt-particles">All</button></div>
+        <div class="settings-row"><label>Entity Shadows:</label><button class="settings-btn" id="opt-shadows">ON</button></div>
+        <div class="settings-row"><label>Smooth Lighting:</label><button class="settings-btn" id="opt-smoothlight">ON</button></div>
+        <button class="settings-done" id="video-done" type="button">Done</button>
+      </div>
+
+      <!-- Controls sub-menu -->
+      <div class="settings-panel settings-sub-menu" id="settings-controls" style="display:none;">
+        <div class="settings-title">Controls</div>
+        <div class="settings-row"><label>Sneak:</label><button class="settings-btn" id="opt-sneak">Hold</button></div>
+        <div class="settings-row"><label>Sprint:</label><button class="settings-btn" id="opt-sprint">Hold</button></div>
+        <div class="settings-row"><label>Auto-Jump:</label><button class="settings-btn" id="opt-autojump">OFF</button></div>
+        <div style="margin-top:10px;border-top:2px solid #555;padding-top:8px;">
+          <div class="settings-title" style="font-size:14px;">Key Binds</div>
+          <div style="font-size:11px;color:#555;line-height:1.8;">
+            Move Forward: W &nbsp;|&nbsp; Move Back: S<br>
+            Move Left: A &nbsp;|&nbsp; Move Right: D<br>
+            Jump: Space &nbsp;|&nbsp; Sprint: Shift<br>
+            Inventory: E &nbsp;|&nbsp; Drop: Q<br>
+            Chat: T &nbsp;|&nbsp; Command: /<br>
+            Fullscreen: F11
+          </div>
+        </div>
+        <button class="settings-done" id="controls-done" type="button">Done</button>
+      </div>
     </div>
 
     <script type="module" src="/src/main.ts"></script>
     <script>
-      // Hide click-to-play on first click, update health bar
-      document.getElementById('click-to-play').addEventListener('click', function() {
-        this.style.opacity = '0';
-        setTimeout(() => this.remove(), 500);
-      });
-      // Health bar updater
-      setInterval(() => {
-        const fill = document.getElementById('health-fill');
-        if (!fill) return;
-        try {
-          const state = JSON.parse(window.render_game_to_text?.() ?? '{}');
-          const hp = Math.max(0, Math.min(100, state.health ?? 100));
-          fill.style.width = hp + '%';
-          fill.style.background = hp > 50
-            ? 'linear-gradient(90deg,#00a86b,#00ff88)'
-            : hp > 25
-            ? 'linear-gradient(90deg,#ff8800,#ffcc00)'
-            : 'linear-gradient(90deg,#cc1a50,#ff2d6f)';
-        } catch {}
-      }, 200);
+      // ═══ TITLE SCREEN ═══
+      const splashTexts = [
+        'Also try Terraria!', '9.95 a month!', 'Closed source!', 'GOTY Edition!',
+        'As seen on TV!', 'Punching trees!', '100% pure JavaScript!', 'Infinite terrain!',
+        'Now with more blocks!', 'Survival mode!', 'Craft all the things!',
+      ];
+      document.getElementById('splash-text').textContent = splashTexts[Math.floor(Math.random() * splashTexts.length)];
 
-      // Hotbar slot selection via click
-      document.querySelectorAll('.hotbar-slot').forEach((slot, index) => {
-        slot.addEventListener('click', () => {
-          const event = new CustomEvent('select-slot', { detail: { index } });
-          window.dispatchEvent(event);
+      // ═══ INVENTORY ═══
+      let inventoryOpen = false;
+      function toggleInventory() {
+        inventoryOpen = !inventoryOpen;
+        document.getElementById('inventory-screen').classList.toggle('open', inventoryOpen);
+        if (inventoryOpen) window.dispatchEvent(new CustomEvent('inventory-populate'));
+        window.dispatchEvent(new CustomEvent('inventory-toggle', { detail: { open: inventoryOpen } }));
+      }
+      document.getElementById('inv-close').addEventListener('click', toggleInventory);
+
+      // Crafting table screen
+      let craftingTableOpen = false;
+      function toggleCraftingTable() {
+        craftingTableOpen = !craftingTableOpen;
+        document.getElementById('crafting-table-screen').classList.toggle('open', craftingTableOpen);
+        window.dispatchEvent(new CustomEvent('crafting-table-toggle', { detail: { open: craftingTableOpen } }));
+      }
+      document.getElementById('crafting-table-close').addEventListener('click', toggleCraftingTable);
+
+      // Furnace screen
+      let furnaceOpen = false;
+      function toggleFurnace() {
+        furnaceOpen = !furnaceOpen;
+        document.getElementById('furnace-screen').classList.toggle('open', furnaceOpen);
+        window.dispatchEvent(new CustomEvent('furnace-toggle', { detail: { open: furnaceOpen } }));
+      }
+      document.getElementById('furnace-close').addEventListener('click', toggleFurnace);
+
+      // Draw simple player model on inventory canvas
+      function drawPlayerModel() {
+        const c = document.getElementById('inv-player-model');
+        if (!c) return;
+        const ctx = c.getContext('2d');
+        ctx.clearRect(0, 0, c.width, c.height);
+        // Head
+        ctx.fillStyle = '#c8a070'; ctx.fillRect(28, 4, 24, 24);
+        // Eyes
+        ctx.fillStyle = '#fff'; ctx.fillRect(32, 12, 6, 4); ctx.fillRect(42, 12, 6, 4);
+        ctx.fillStyle = '#333'; ctx.fillRect(34, 13, 3, 3); ctx.fillRect(44, 13, 3, 3);
+        // Body (teal shirt)
+        ctx.fillStyle = '#3b8291'; ctx.fillRect(28, 28, 24, 30);
+        // Arms
+        ctx.fillStyle = '#3b8291'; ctx.fillRect(18, 28, 10, 28); ctx.fillRect(52, 28, 10, 28);
+        // Hands
+        ctx.fillStyle = '#c8a070'; ctx.fillRect(20, 52, 6, 6); ctx.fillRect(54, 52, 6, 6);
+        // Legs (blue pants)
+        ctx.fillStyle = '#2e4a7a'; ctx.fillRect(30, 58, 8, 28); ctx.fillRect(42, 58, 8, 28);
+        // Shoes
+        ctx.fillStyle = '#4a3520'; ctx.fillRect(30, 84, 8, 8); ctx.fillRect(42, 84, 8, 8);
+      }
+      drawPlayerModel();
+
+      // ═══ SETTINGS ═══
+      let settingsOpen = false;
+      function showSettingsPanel(id) {
+        document.querySelectorAll('.settings-panel').forEach(p => p.style.display = 'none');
+        const panel = document.getElementById(id);
+        if (panel) panel.style.display = '';
+      }
+      function toggleSettings() {
+        settingsOpen = !settingsOpen;
+        document.getElementById('settings-screen').classList.toggle('open', settingsOpen);
+        if (settingsOpen) showSettingsPanel('settings-main');
+        window.dispatchEvent(new CustomEvent('settings-toggle', { detail: { open: settingsOpen } }));
+      }
+
+      document.getElementById('btn-options').addEventListener('click', toggleSettings);
+      document.getElementById('settings-done').addEventListener('click', toggleSettings);
+
+      // Sub-menu navigation
+      document.getElementById('btn-music-sounds').addEventListener('click', () => showSettingsPanel('settings-music'));
+      document.getElementById('btn-video-settings').addEventListener('click', () => showSettingsPanel('settings-video'));
+      document.getElementById('btn-controls').addEventListener('click', () => showSettingsPanel('settings-controls'));
+      document.getElementById('music-done').addEventListener('click', () => showSettingsPanel('settings-main'));
+      document.getElementById('video-done').addEventListener('click', () => showSettingsPanel('settings-main'));
+      document.getElementById('controls-done').addEventListener('click', () => showSettingsPanel('settings-main'));
+
+      // Placeholder sub-menus
+      ['btn-language-settings','btn-chat-settings','btn-skin-settings','btn-resource-packs','btn-accessibility-settings'].forEach(id => {
+        document.getElementById(id)?.addEventListener('click', () => {
+          alert('This settings page is not yet implemented.');
         });
       });
+
+      // Settings controls
+      document.getElementById('opt-fov').addEventListener('input', (e) => {
+        document.getElementById('opt-fov-val').textContent = e.target.value;
+        window.dispatchEvent(new CustomEvent('settings-change', { detail: { fov: +e.target.value } }));
+      });
+      const difficulties = ['Peaceful', 'Easy', 'Normal', 'Hard'];
+      let diffIdx = 2;
+      document.getElementById('opt-difficulty').addEventListener('click', (e) => {
+        diffIdx = (diffIdx + 1) % difficulties.length;
+        e.target.textContent = difficulties[diffIdx];
+        window.dispatchEvent(new CustomEvent('settings-change', { detail: { difficulty: difficulties[diffIdx] } }));
+      });
+      const renderDistances = [4, 6, 8, 10, 12, 16, 24, 32];
+      let rdIdx = 2;
+      document.getElementById('opt-render').addEventListener('click', (e) => {
+        rdIdx = (rdIdx + 1) % renderDistances.length;
+        e.target.textContent = renderDistances[rdIdx] + ' chunks';
+        window.dispatchEvent(new CustomEvent('settings-change', { detail: { renderDistance: renderDistances[rdIdx] } }));
+      });
+      // Volume sliders
+      ['opt-master','opt-music','opt-weather','opt-blocks-vol','opt-hostile','opt-friendly','opt-players','opt-ambient','opt-ui-vol'].forEach(id => {
+        document.getElementById(id)?.addEventListener('input', (e) => {
+          const valEl = document.getElementById(id + '-val');
+          if (valEl) valEl.textContent = e.target.value + '%';
+        });
+      });
+      // Video settings toggles
+      const graphicsModes = ['Fast', 'Fancy', 'Fabulous!'];
+      let gfxIdx = 1;
+      document.getElementById('opt-graphics')?.addEventListener('click', (e) => { gfxIdx = (gfxIdx + 1) % graphicsModes.length; e.target.textContent = graphicsModes[gfxIdx]; });
+      const framerateLimits = ['Unlimited', '30 fps', '60 fps', '120 fps', '240 fps'];
+      let frIdx = 3;
+      document.getElementById('opt-framerate')?.addEventListener('click', (e) => { frIdx = (frIdx + 1) % framerateLimits.length; e.target.textContent = framerateLimits[frIdx]; });
+      document.getElementById('opt-vsync')?.addEventListener('click', (e) => { e.target.textContent = e.target.textContent === 'ON' ? 'OFF' : 'ON'; });
+      document.getElementById('opt-clouds')?.addEventListener('click', (e) => { const m = ['OFF', 'Fast', 'Fancy']; const i = (m.indexOf(e.target.textContent) + 1) % m.length; e.target.textContent = m[i]; });
+      const particleModes = ['All', 'Decreased', 'Minimal'];
+      let pIdx = 0;
+      document.getElementById('opt-particles')?.addEventListener('click', (e) => { pIdx = (pIdx + 1) % particleModes.length; e.target.textContent = particleModes[pIdx]; });
+      document.getElementById('opt-shadows')?.addEventListener('click', (e) => { e.target.textContent = e.target.textContent === 'ON' ? 'OFF' : 'ON'; });
+      document.getElementById('opt-smoothlight')?.addEventListener('click', (e) => { e.target.textContent = e.target.textContent === 'ON' ? 'OFF' : 'ON'; });
+      document.getElementById('opt-brightness')?.addEventListener('input', (e) => { document.getElementById('opt-brightness-val').textContent = e.target.value; });
+      // Controls toggles
+      document.getElementById('opt-sneak')?.addEventListener('click', (e) => { e.target.textContent = e.target.textContent === 'Hold' ? 'Toggle' : 'Hold'; });
+      document.getElementById('opt-sprint')?.addEventListener('click', (e) => { e.target.textContent = e.target.textContent === 'Hold' ? 'Toggle' : 'Hold'; });
+      document.getElementById('opt-autojump')?.addEventListener('click', (e) => { e.target.textContent = e.target.textContent === 'ON' ? 'OFF' : 'ON'; });
+
+      // ═══ TITLE BUTTONS ═══
+      document.getElementById('btn-singleplayer').addEventListener('click', () => {
+        document.getElementById('title-screen').classList.add('hidden');
+        document.getElementById('scene').requestPointerLock();
+        window.dispatchEvent(new CustomEvent('game-start', { detail: { mode: 'singleplayer' } }));
+      });
+      document.getElementById('btn-multiplayer').addEventListener('click', () => {
+        document.getElementById('title-screen').classList.add('hidden');
+        document.getElementById('scene').requestPointerLock();
+        window.dispatchEvent(new CustomEvent('game-start', { detail: { mode: 'multiplayer' } }));
+      });
+      document.getElementById('btn-realms')?.addEventListener('click', () => {
+        alert('Minecraft Realms is not available in this version.');
+      });
+      document.getElementById('btn-language')?.addEventListener('click', () => {
+        alert('Language settings coming soon.');
+      });
+      document.getElementById('btn-accessibility')?.addEventListener('click', () => {
+        alert('Accessibility settings coming soon.');
+      });
+      document.getElementById('btn-friends')?.addEventListener('click', () => {
+        alert('Friends list coming soon.');
+      });
+      document.getElementById('btn-quit').addEventListener('click', () => {
+        window.close();
+        document.body.innerHTML = '<div style="display:grid;place-items:100vh;color:#fff;background:#1a1a2e;font-family:monospace;font-size:24px;text-align:center;">Thanks for playing MineCraft!<br><br><button onclick="location.reload()" style="padding:12px 28px;font-size:18px;cursor:pointer;">Play Again</button></div>';
+      });
+
+      // ═══ HUD FILL ═══
+      const fillHud = () => {
+        let state = {};
+        try { state = JSON.parse(window.render_game_to_text?.() ?? '{}'); } catch {}
+        const hearts = Math.ceil(Math.max(0, Math.min(20, state.health ?? 20)) / 2);
+        const foodBars = Math.ceil(Math.max(0, Math.min(20, state.hunger ?? 20)) / 2);
+        document.getElementById('health').innerHTML = Array.from({ length: 10 }, (_, i) => `<span class="heart ${i < hearts ? 'full' : ''}">♥</span>`).join('');
+        document.getElementById('hunger').innerHTML = Array.from({ length: 10 }, (_, i) => `<span class="food" style="background:${i < foodBars ? '#bf6b32' : '#3a3a3a'}"></span>`).join('');
+        const bar = document.getElementById('combat-health');
+        const opponentHealth = state.opponent?.health;
+        bar.classList.toggle('visible', typeof opponentHealth === 'number');
+        if (typeof opponentHealth === 'number') bar.style.setProperty('--hp', `${opponentHealth * 5}%`);
+      };
+      fillHud();
+      setInterval(fillHud, 120);
+
+      // Hotbar click
+      document.querySelectorAll('.hotbar-slot').forEach((slot, index) => {
+        slot.addEventListener('click', () => window.dispatchEvent(new CustomEvent('select-slot', { detail: { index } })));
+      });
+
+      // Inventory toggle via E key
+      document.addEventListener('keydown', (e) => {
+        if (e.code === 'KeyE' && !inventoryOpen && !craftingTableOpen && !furnaceOpen && !settingsOpen && !pauseOpen) {
+          e.preventDefault();
+          toggleInventory();
+        } else if (e.code === 'Escape') {
+          if (inventoryOpen) { toggleInventory(); return; }
+          if (craftingTableOpen) { toggleCraftingTable(); return; }
+          if (furnaceOpen) { toggleFurnace(); return; }
+          if (settingsOpen) { toggleSettings(); return; }
+          if (pauseOpen) { togglePause(); return; }
+          // If game is running (not on title screen), open pause menu
+          if (!document.getElementById('title-screen').classList.contains('hidden')) return;
+          togglePause();
+        }
+      });
+
+      // Pause menu
+      let pauseOpen = false;
+      function togglePause() {
+        pauseOpen = !pauseOpen;
+        document.getElementById('pause-menu').style.display = pauseOpen ? 'flex' : 'none';
+        if (pauseOpen) {
+          document.exitPointerLock();
+        } else {
+          document.getElementById('scene').requestPointerLock();
+        }
+        window.dispatchEvent(new CustomEvent('pause-toggle', { detail: { open: pauseOpen } }));
+      }
+      document.getElementById('pause-back').addEventListener('click', togglePause);
+      document.getElementById('pause-options').addEventListener('click', () => {
+        togglePause();
+        toggleSettings();
+      });
+      document.getElementById('pause-disconnect').addEventListener('click', () => {
+        togglePause();
+        document.getElementById('title-screen').classList.remove('hidden');
+        window.dispatchEvent(new CustomEvent('game-stop'));
+      });
+
+      // Death screen
+      let deathOpen = false;
+      function showDeathScreen() {
+        deathOpen = true;
+        document.getElementById('death-screen').style.display = 'flex';
+        document.exitPointerLock();
+      }
+      function hideDeathScreen() {
+        deathOpen = false;
+        document.getElementById('death-screen').style.display = 'none';
+      }
+      document.getElementById('death-respawn').addEventListener('click', () => {
+        hideDeathScreen();
+        window.dispatchEvent(new CustomEvent('player-respawn'));
+        document.getElementById('scene').requestPointerLock();
+      });
+      document.getElementById('death-title').addEventListener('click', () => {
+        hideDeathScreen();
+        document.getElementById('title-screen').classList.remove('hidden');
+        window.dispatchEvent(new CustomEvent('game-stop'));
+      });
+
+      // Expose death screen functions to scene.ts
+      window.showDeathScreen = showDeathScreen;
+      window.hideDeathScreen = hideDeathScreen;
     </script>
   </body>
 </html>

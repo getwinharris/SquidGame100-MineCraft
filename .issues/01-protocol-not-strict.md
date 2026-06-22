@@ -14,7 +14,7 @@ unknown keys). Stage 0 should set `.strict()` so unexpected fields fail loud.
 
 Pre-req: `npm -w @sg100/server run dev` on `ws://localhost:8080/ws` and
 `npm -w @sg100/client run dev` on `http://localhost:5173/`. Both runnable
-per `progress.md`.
+per the root `AGENTS.md`.
 
 1. From a Node REPL with `ws` installed in the workspace, open a raw
    `new WebSocket('ws://localhost:8080/ws')`.

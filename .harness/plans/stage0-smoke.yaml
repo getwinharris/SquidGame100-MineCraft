@@ -25,7 +25,7 @@ tasks:
       5. packages/shared/AGENTS.md
       6. .harness/AGENTS.md
 
-      Boot the runtime you need (Stage 0 is runnable per README + progress.md):
+      Boot the runtime you need (Stage 0 is runnable per README):
       - Vite client: `npm -w @sg100/client run dev` (http://localhost:5173)
       - Node server: `npm -w @sg100/server run dev` (http://localhost:8080, ws on /ws)
       Health check before driving the browser: `curl -sf http://localhost:8080/healthz`.

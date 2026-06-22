@@ -26,7 +26,7 @@ before a human would call it "playable"?
   - `.harness/AGENTS.md` (team contracts)
 - Know the stage you are testing. Do **not** file forward-looking features as
   defects: if the voxel engine / controls are explicitly out of scope for this
-  stage (see each package AGENTS.md + `progress.md`), they belong in the
+  stage (see each package AGENTS.md), they belong in the
   "gap-to-playable" section, not as issues.
 - Boot the client: `npm -w @sg100/client run dev` (http://localhost:5173);
   server: `npm -w @sg100/server run dev` (http://localhost:8080). Health check:

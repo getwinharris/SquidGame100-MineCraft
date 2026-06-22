@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Browser client for MineCraft: Vite, three.js rendering, HUD, input, and client network status.
+Browser client for MineCraft: Canvas 2D rendering, HUD, input, and client network status.
 
 ## Ownership
 
@@ -21,17 +21,18 @@ Browser client for MineCraft: Vite, three.js rendering, HUD, input, and client n
 
 ## Work Guidance
 
-- Draw primary visuals in the canvas, not CSS backgrounds.
+- Draw primary visuals on the canvas, not CSS backgrounds.
 - Keep HUD text minimal during gameplay.
-- All block textures load from minecraft.wiki URLs at runtime via `three.TextureLoader`. No procedural generation, no local PNG files.
+- All blocks rendered as colored rectangles via Canvas 2D API (`ctx.fillRect`). No three.js textures.
 - Health (20 HP) and hunger (20 points) systems match Minecraft Java Edition.
 - Hunger depletes when sprinting; natural regeneration requires hunger >= 18.
 - Day/night cycle: 20-minute cycle matching Minecraft, sky color and lighting update dynamically.
 
 ### Voxel Engine (scene.ts)
-- Supports live rebuilding of the voxel instanced meshes on the main thread.
-- Supports wireframe block highlights via raycasting.
-- Allows block breaking (left-click) and block placement (right-click) matching the Minecraft standard.
+- Renders a 2D side-view cross-section of the world at the player's Z position.
+- Each block is a 24x24 pixel colored rectangle drawn with `ctx.fillRect`.
+- Block targeting uses DDA ray marching (no three.js raycaster).
+- Block breaking (left-click) and block placement (right-click) matching the Minecraft standard.
 - Provides a visual hotbar selector supporting numeric keys 1-9 or clicks.
 - Integrates Web Audio API sound cue synthesizer.
 
@@ -67,8 +68,6 @@ Browser client for MineCraft: Vite, three.js rendering, HUD, input, and client n
 ## Verification
 
 - `npm -w @sg100/client run typecheck`
-- `npm -w @sg100/client run build`
-- Web-game smoke with `$WEB_GAME_CLIENT` against the Vite dev server.
 
 ## Child DOX Index
 

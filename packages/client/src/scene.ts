@@ -1290,10 +1290,20 @@ function getHeldToolType(selectedBlock: number): { toolType: ToolType; toolTier:
   if (selectedBlock >= ITEM.WOODEN_SWORD && selectedBlock <= ITEM.NETHERITE_SWORD) {
     return { toolType: 'sword', toolTier: 0, toolId: selectedBlock };
   }
+  if (selectedBlock === ITEM.SHEARS) {
+    return { toolType: 'shears', toolTier: 0, toolId: selectedBlock };
+  }
   return { toolType: 'none', toolTier: 0, toolId: 0 };
 }
 
-function getBlockDrops(blockId: number): number[] {
+function getBlockDrops(blockId: number, toolType: ToolType = 'none'): number[] {
+  const props = getBlockProperties(blockId);
+  if (props.silkTouch) {
+    if (toolType === 'shears' && props.requiredTool === 'shears') {
+      return [blockId];
+    }
+    return [];
+  }
   const drops: Record<number, number[]> = {
     [BLOCK.STONE]: [BLOCK.COBBLESTONE],
     [BLOCK.GRASS]: [BLOCK.DIRT],
@@ -1906,7 +1916,8 @@ export function createScene(canvas: HTMLCanvasElement): () => void {
   const breakBlock = (bx: number, by: number, bz: number, blockId: number) => {
     setBlock(bx, by, bz, BLOCK.AIR);
     sounds.playTone(200, 'square', 0.1);
-    const drops = getBlockDrops(blockId);
+    const { toolType } = getHeldToolType(player.selectedBlock);
+    const drops = getBlockDrops(blockId, toolType);
     drops.forEach(itemId => addDropToInventory(itemId));
     if (drops.length > 0) {
       showNotification('+' + drops.length + ' ' + getBlockName(drops[0]));

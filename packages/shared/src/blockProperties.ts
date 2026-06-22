@@ -21,12 +21,13 @@ export interface BlockProperties {
   minToolTier: number;
   replaceable: boolean;
   ticks: boolean;
+  silkTouch: boolean;
 }
 
 const P: Record<number, BlockProperties> = {};
 
-function b(h: number, r: number, l: number, t: boolean, s: boolean, li: boolean, g: boolean, f: boolean, tool: ToolType, tier: number, rep = false, ticks = false): BlockProperties {
-  return { hardness: h, resistance: r, lightLevel: l, transparent: t, solid: s, liquid: li, gravity: g, flammable: f, requiredTool: tool, minToolTier: tier, replaceable: rep, ticks };
+function b(h: number, r: number, l: number, t: boolean, s: boolean, li: boolean, g: boolean, f: boolean, tool: ToolType, tier: number, rep = false, ticks = false, silkTouch = false): BlockProperties {
+  return { hardness: h, resistance: r, lightLevel: l, transparent: t, solid: s, liquid: li, gravity: g, flammable: f, requiredTool: tool, minToolTier: tier, replaceable: rep, ticks, silkTouch };
 }
 
 P[BLOCK.AIR] = b(0,0,0,true,false,false,false,false,'none',0,true);
@@ -36,7 +37,7 @@ P[BLOCK.DIRT] = b(0.5,0.5,0,false,true,false,false,false,'shovel',0);
 P[BLOCK.COBBLESTONE] = b(2,6,0,false,true,false,false,false,'pickaxe',0);
 P[BLOCK.OAK_PLANKS] = b(2,3,0,false,true,false,false,true,'axe',0);
 P[BLOCK.OAK_LOG] = b(2,3,0,false,true,false,false,true,'axe',0);
-P[BLOCK.OAK_LEAVES] = b(0.2,0.2,0,true,false,false,false,true,'shears',0);
+P[BLOCK.OAK_LEAVES] = b(0.2,0.2,0,true,false,false,false,true,'shears',0,false,false,true);
 P[BLOCK.BEDROCK] = b(-1,3600000,0,false,true,false,false,false,'none',0);
 P[BLOCK.WATER] = b(100,500,0,true,false,false,false,false,'none',0,true);
 P[BLOCK.LAVA] = b(100,500,15,true,false,false,true,false,'none',0,true);
@@ -128,11 +129,11 @@ P[BLOCK.BIRCH_LOG] = b(2,3,0,false,true,false,false,true,'axe',0);
 P[BLOCK.JUNGLE_LOG] = b(2,3,0,false,true,false,false,true,'axe',0);
 P[BLOCK.ACACIA_LOG] = b(2,3,0,false,true,false,false,true,'axe',0);
 P[BLOCK.DARK_OAK_LOG] = b(2,3,0,false,true,false,false,true,'axe',0);
-P[BLOCK.SPRUCE_LEAVES] = b(0.2,0.2,0,true,false,false,false,true,'shears',0);
-P[BLOCK.BIRCH_LEAVES] = b(0.2,0.2,0,true,false,false,false,true,'shears',0);
-P[BLOCK.JUNGLE_LEAVES] = b(0.2,0.2,0,true,false,false,false,true,'shears',0);
-P[BLOCK.ACACIA_LEAVES] = b(0.2,0.2,0,true,false,false,false,true,'shears',0);
-P[BLOCK.DARK_OAK_LEAVES] = b(0.2,0.2,0,true,false,false,false,true,'shears',0);
+P[BLOCK.SPRUCE_LEAVES] = b(0.2,0.2,0,true,false,false,false,true,'shears',0,false,false,true);
+P[BLOCK.BIRCH_LEAVES] = b(0.2,0.2,0,true,false,false,false,true,'shears',0,false,false,true);
+P[BLOCK.JUNGLE_LEAVES] = b(0.2,0.2,0,true,false,false,false,true,'shears',0,false,false,true);
+P[BLOCK.ACACIA_LEAVES] = b(0.2,0.2,0,true,false,false,false,true,'shears',0,false,false,true);
+P[BLOCK.DARK_OAK_LEAVES] = b(0.2,0.2,0,true,false,false,false,true,'shears',0,false,false,true);
 P[BLOCK.GRANITE] = b(1.5,6,0,false,true,false,false,false,'pickaxe',0);
 P[BLOCK.DIORITE] = b(1.5,6,0,false,true,false,false,false,'pickaxe',0);
 P[BLOCK.ANDESITE] = b(1.5,6,0,false,true,false,false,false,'pickaxe',0);
@@ -211,7 +212,7 @@ P[BLOCK.NETHER_WART_BLOCK] = b(1,1,0,false,true,false,false,false,'hoe',0);
 P[BLOCK.WET_SPONGE] = b(0.6,0.6,0,false,true,false,false,false,'none',0);
 P[BLOCK.MELON_STEM] = b(0,0,0,true,false,false,false,false,'none',0,true);
 P[BLOCK.PUMPKIN_STEM] = b(0,0,0,true,false,false,false,false,'none',0,true);
-P[BLOCK.VINE] = b(0.2,0.2,0,true,false,false,false,true,'shears',0,true);
+P[BLOCK.VINE] = b(0.2,0.2,0,true,false,false,false,true,'shears',0,true,false,true);
 P[BLOCK.LILY_PAD] = b(0,0,0,true,false,false,false,false,'none',0,true);
 P[BLOCK.COCOA] = b(0.2,0.2,0,true,false,false,false,false,'none',0,true);
 P[BLOCK.FARMLAND] = b(0.6,0.6,0,false,true,false,false,false,'shovel',0);
@@ -238,6 +239,7 @@ P[BLOCK.TEAL] = b(2,3,0,false,true,false,false,false,'pickaxe',0);
 P[BLOCK.METAL] = b(5,6,0,false,true,false,false,false,'pickaxe',1);
 P[BLOCK.GOLD] = b(3,6,0,false,true,false,false,false,'pickaxe',2);
 P[BLOCK.BLOOD] = b(0.5,0.5,0,false,true,false,false,false,'pickaxe',0);
+P[BLOCK.GLASS] = b(0.3,0.3,0,true,true,false,false,false,'none',0,false,false,true); // wiki-source: https://minecraft.wiki/w/Glass
 P[BLOCK.PINK_WALL] = b(2,6,0,false,true,false,false,false,'pickaxe',0);
 P[BLOCK.CONCRETE] = b(1.8,6,0,false,true,false,false,false,'pickaxe',0);
 
@@ -254,8 +256,10 @@ for (const id of [306,307,308,309,310,311,312,313,314,315,316,317,318,319,320,32
   P[id] = b(0.8,0.8,0,false,true,false,false,true,'shears',0);
 }
 
+P[BLOCK.COBWEB] = b(4,4,0,true,false,false,false,false,'shears',0); // wiki-source: https://minecraft.wiki/w/Cobweb
+
 export function getBlockProperties(blockId: number): BlockProperties {
-  return P[blockId] ?? b(1,1,0,false,true,false,false,false,'none',0);
+  return P[blockId] ?? b(1,1,0,false,true,false,false,false,'none',0,false,false,false);
 }
 
 /**
@@ -290,6 +294,10 @@ export function getHarvestTime(
 
   // Instant break (hardness 0)
   if (props.hardness === 0) return 0;
+
+  // Cobweb instant break with shears or sword
+  // wiki-source: https://minecraft.wiki/w/Cobweb#Breaking
+  if (blockId === BLOCK.COBWEB && (toolType === 'shears' || toolType === 'sword')) return 0;
 
   // === Determine base mining speed from tool item component ===
   const isCorrectToolType = toolType !== 'none' && toolType === props.requiredTool;

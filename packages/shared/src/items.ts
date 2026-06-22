@@ -1127,7 +1127,7 @@ export const ITEM_PROPERTIES: Record<number, ItemProperties> = {
     displayName: 'Shears',
     maxStackSize: 1,
     durability: 238,
-    miningSpeed: 2,
+    miningSpeed: 1.5, // wiki-source: https://minecraft.wiki/w/Shears
     miningLevel: 0,
     enchantability: 30,
     category: 'tool',
